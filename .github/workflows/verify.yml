@@ -16,8 +16,14 @@ on:
 permissions:
   contents: read
 
+# Only successive updates to the same PR share a group.
+concurrency:
+  group: verify-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify:
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_only && 'Release diagnostics' || 'Full verification' }}
     runs-on: windows-2025-vs2026
     # Hosted Windows builds can take over 30 minutes including analysis and ASan.
     timeout-minutes: 45
@@ -28,5 +34,5 @@ jobs:
       - name: ${{ inputs.release_only && 'Verify source and Release x64 (diagnostic)' || 'Verify source and test x64 (full)' }}
         shell: powershell
         run: |
-          $releaseOnly = '${{ inputs.release_only }}' -eq 'true'
+          $releaseOnly = '${{ github.event_name == 'workflow_dispatch' && inputs.release_only }}' -eq 'true'
           .\scripts\ci.ps1 -ReleaseOnly:$releaseOnly

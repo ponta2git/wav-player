@@ -80,6 +80,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1 -Analyz
 - [試験仕様](docs/test-specification.md)：自動検証と実機の確認手順
 - [依存とライセンス](docs/dependencies.md)：SDKの取得、公開範囲、第三者条件
 
+開発は作業ブランチで進め、`main` への変更はPRを経由します。最新の `main` に追従した状態で、必須チェック `Full verification`（静的解析・Release・ASanを含む全検証）が成功してから、リポジトリ所有者が差分を確認してマージします。個人開発のため承認レビュー数は必須にしていません。手動の `Release diagnostics` は必須の全検証とは別の診断です。
+
+外部からのPRとIssuesは受け付けていますが、採用・対応・対応期限は約束していません。
+
 `docs/` には現行の仕様・設計・試験手順を置きます。実験メモは `private/notes/`、途中の実験仕様は `private/experiments/`、実機記録は `private/results/`、公開準備の監査記録は `private/publication/`、生成物は `out/` に置きます。`private/` と `out/` はGitの追跡対象外です。
 
 コミット前には `git status`、`git diff`、`git diff --cached` で変更と追加対象を確認し、次を実行します。ファイルの追加・削除では [公開対象一覧](build/public-files.txt) とVisual Studio登録を同時に更新してください。
