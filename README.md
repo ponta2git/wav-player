@@ -50,7 +50,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1 -Analyz
 
 プロジェクト構成・設定の監査、Debug／Releaseの静的解析付きビルド、ReleaseとDebug-ASanの模擬ASIO試験、Release成果物の監査を実行します。GitHub Actionsは `scripts/ci.ps1` から公開対象の監査、PowerShellの回帰試験、SDK取得、同じ全検証を実行します。手動実行の `release_only`（既定はfalse）は、runner上の失敗を再現するためにReleaseだけをビルド・試験する診断モードです。静的解析とASanを省くため、全検証の代わりにはなりません。
 
-詳細ログはrunner内の一時領域に保持し、公開ログには合否、試験名、失敗したケース名・ソースのファイル名と行番号・数値の期待値と実測値だけを出します。例外の詳細やローカルパスは出しません。実行ファイルのartifactやReleaseは公開しません。[試験仕様](docs/test-specification.md)
+詳細ログはrunner内の一時領域に保持し、公開ログには合否、試験名、失敗したケース名・ソースのファイル名と行番号・数値の期待値と実測値を出します。既知の例外型と、固定したGUI試験操作の識別子・メッセージ番号・Win32エラー番号も表示します。例外の詳細やローカルパスは出しません。実行ファイルのartifactやReleaseは公開しません。[試験仕様](docs/test-specification.md)
 
 ## 再生PCで使う
 

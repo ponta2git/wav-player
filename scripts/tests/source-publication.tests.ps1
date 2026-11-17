@@ -121,6 +121,16 @@ Write-Output '[FAIL] fixture numeric assertion: example field: expected 1, got 0
 Write-Output '[FAIL] fixture exception: C:\Users\PRIVATE_CI_FIXTURE\secret.log token=PRIVATE_CI_TOKEN'
 Write-Output '[FAIL] fixture GUI timeout: class std::runtime_error: GUI state transition: deadline expired; C:\Users\PRIVATE_CI_GUI\input.wav token=PRIVATE_CI_TOKEN (player_window_tests.cpp:1150)'
 Write-Output '[FAIL] fixture GUI fullpath suffix: class std::runtime_error: GUI stopped responding (C:\Users\PRIVATE_CI_GUI\player_window_tests.cpp:1151)'
+Write-Output '[FAIL] fixture typed exception: class std::out_of_range: C:\Users\PRIVATE_CI_RANGE\input.wav token=PRIVATE_CI_TOKEN'
+Write-Output '[FAIL] fixture GUI send: class std::runtime_error: gui_send_failed message=13 win32=1460 (player_window_tests.cpp:431)'
+Write-Output '[FAIL] fixture GUI send upper bound: class std::runtime_error: gui_send_failed message=4294967295 win32=4294967295 (player_window_tests.cpp:431)'
+Write-Output '[FAIL] fixture unknown exception: class PRIVATE_CI_TYPE: gui_send_failed message=13 win32=1460'
+Write-Output '[FAIL] fixture extended exception name: class std::runtime_error_PRIVATE_CI_TYPE: gui_send_failed message=13 win32=1460'
+Write-Output '[FAIL] fixture GUI false marker: class std::runtime_error: gui_send_failed message=13 win32=1460 PRIVATE_CI_TOKEN (player_window_tests.cpp:431)'
+Write-Output '[FAIL] fixture GUI private message: class std::runtime_error: gui_send_failed message=PRIVATE_CI_MESSAGE win32=1460'
+Write-Output '[FAIL] fixture GUI overflowing message: class std::runtime_error: gui_send_failed message=4294967296 win32=1460 (player_window_tests.cpp:431)'
+Write-Output '[FAIL] fixture GUI overflowing error: class std::runtime_error: gui_send_failed message=13 win32=4294967296 (player_window_tests.cpp:431)'
+Write-Output '[FAIL] fixture GUI negative message: class std::runtime_error: gui_send_failed message=-1 win32=1460'
 Write-Output '[FAIL] fixture\PRIVATE_CI_CASE: do not expose a path as a case name'
 Write-Output 'FAIL    player_window         1.2 s PRIVATE_CI_DETAIL'
 Write-Output '1 suites in 1.2 s: 0 passed, 1 failed, 0 timed out, 0 crashed.'
@@ -137,8 +147,22 @@ if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'fail.flag')) { exit 17 }
         Assert-True ($result.Output.Contains($expected)) ('Missing reconstructed diagnostic: ' + $expected)
     }
     $publicLines = @($result.Output -split '\r?\n')
-    Assert-True ($publicLines -contains '[FAIL] fixture GUI timeout (player_window_tests.cpp:1150)') 'CI omitted the GUI exception location or retained its raw detail.'
-    Assert-True ($publicLines -contains '[FAIL] fixture GUI fullpath suffix') 'CI accepted a private path as a public source location.'
+    foreach ($expected in @(
+        '[FAIL] fixture GUI timeout: exception=std::runtime_error (player_window_tests.cpp:1150)',
+        '[FAIL] fixture GUI fullpath suffix: exception=std::runtime_error',
+        '[FAIL] fixture typed exception: exception=std::out_of_range',
+        '[FAIL] fixture GUI send: exception=std::runtime_error; gui_send_failed message=13 win32=1460 (player_window_tests.cpp:431)',
+        '[FAIL] fixture GUI send upper bound: exception=std::runtime_error; gui_send_failed message=4294967295 win32=4294967295 (player_window_tests.cpp:431)',
+        '[FAIL] fixture unknown exception',
+        '[FAIL] fixture extended exception name',
+        '[FAIL] fixture GUI false marker: exception=std::runtime_error (player_window_tests.cpp:431)',
+        '[FAIL] fixture GUI private message: exception=std::runtime_error',
+        '[FAIL] fixture GUI overflowing message: exception=std::runtime_error (player_window_tests.cpp:431)',
+        '[FAIL] fixture GUI overflowing error: exception=std::runtime_error (player_window_tests.cpp:431)',
+        '[FAIL] fixture GUI negative message: exception=std::runtime_error'
+    )) {
+        Assert-True ($publicLines -contains $expected) ('CI diagnostic differs from its bounded schema: ' + $expected)
+    }
     Assert-True (-not ($result.Output + $result.Error).Contains('PRIVATE_CI_')) 'CI exposed a raw exception, path, case or status detail.'
     Assert-True (Test-Path -LiteralPath (Join-Path $ci 'scripts/tests/setup-ran.txt')) 'Successful CI did not continue to setup tests.'
     Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $ci 'logs') -Force).Count -eq 0) 'Successful CI left detailed logs.'

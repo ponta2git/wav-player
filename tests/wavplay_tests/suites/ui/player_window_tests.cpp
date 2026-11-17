@@ -120,7 +120,8 @@ private:
 class Gui {
 public:
     Gui(MockAsio& driver, std::wstring path, int show_command = SW_HIDE, std::chrono::milliseconds start_silence = 0ms,
-        std::wstring settings_path = {}, bool read_selected_device = false, std::wstring playlist_path = {})
+        std::wstring settings_path = {}, bool read_selected_device = false, std::wstring playlist_path = {},
+        std::source_location location = std::source_location::current())
     {
         try {
             std::promise<DWORD> started;
@@ -161,16 +162,19 @@ public:
                     return TRUE;
                 }, reinterpret_cast<LPARAM>(&window));
                 return window && GetDlgItem(window, ui::control_id::pending);
-            }, "GUI window creation");
+            }, "GUI window creation", location);
             // A thread ID alone does not imply a message queue exists. Window
             // creation establishes it before the test installs its input hook
             // or sends any input, without altering the product's startup path.
             const std::lock_guard lock(hook_gate_);
-            if (hook_thread_finished_) { throw std::runtime_error("GUI exited before installing test hooks"); }
+            if (hook_thread_finished_) {
+                throw std::runtime_error("GUI exited before installing test hooks" + detail::location_suffix(location));
+            }
             hook_ = SetWindowsHookExW(WH_GETMESSAGE, input_barrier, nullptr, thread_);
             if (!hook_) {
                 const auto error = GetLastError();
-                throw std::runtime_error("Could not install GUI input barrier hook: Win32 error " + std::to_string(error));
+                throw std::runtime_error("Could not install GUI input barrier hook: Win32 error " + std::to_string(error) +
+                    detail::location_suffix(location));
             }
             // The product changes control text and enabled state only on its
             // own thread. Observing those calls lets waits wake on each update
@@ -179,7 +183,8 @@ public:
             update_hook_ = SetWindowsHookExW(WH_CALLWNDPROCRET, control_updated, nullptr, thread_);
             if (!update_hook_) {
                 const auto error = GetLastError();
-                throw std::runtime_error("Could not install GUI update hook: Win32 error " + std::to_string(error));
+                throw std::runtime_error("Could not install GUI update hook: Win32 error " + std::to_string(error) +
+                    detail::location_suffix(location));
             }
         } catch (...) {
             cleanup();
@@ -273,27 +278,36 @@ public:
         wait_for(barrier_.get(), "nested UI loop exit");
         expect("nested UI loop has no wait failure", static_cast<int>(modal_failed_.load()), 0);
     }
-    void responsive() const { (void)send(window, WM_NULL); }
-    std::wstring text(int id) const
+    void responsive(std::source_location location = std::source_location::current()) const
+    {
+        (void)send(window, WM_NULL, 0, 0, location);
+    }
+    std::wstring text(int id, std::source_location location = std::source_location::current()) const
     {
         wchar_t value[2048]{};
         const HWND child = GetDlgItem(window, id);
-        if (!child) { throw std::runtime_error("GUI control does not exist: " + std::to_string(id)); }
-        (void)send(child, WM_GETTEXT, std::size(value), reinterpret_cast<LPARAM>(value));
+        if (!child) {
+            throw std::runtime_error("GUI control does not exist: " + std::to_string(id) + detail::location_suffix(location));
+        }
+        (void)send(child, WM_GETTEXT, std::size(value), reinterpret_cast<LPARAM>(value), location);
         return value;
     }
     bool enabled(int id) const { return IsWindowEnabled(GetDlgItem(window, id)) != FALSE; }
-    void click(int id) const
+    void click(int id, std::source_location location = std::source_location::current()) const
     {
-        (void)send(window, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), reinterpret_cast<LPARAM>(GetDlgItem(window, id)));
+        (void)send(window, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), reinterpret_cast<LPARAM>(GetDlgItem(window, id)), location);
     }
-    LRESULT selected_track() const { return send(GetDlgItem(window, ui::control_id::playlist), LB_GETCURSEL); }
-    void select_track(std::size_t index, bool play = false) const
+    LRESULT selected_track(std::source_location location = std::source_location::current()) const
+    {
+        return send(GetDlgItem(window, ui::control_id::playlist), LB_GETCURSEL, 0, 0, location);
+    }
+    void select_track(std::size_t index, bool play = false,
+        std::source_location location = std::source_location::current()) const
     {
         const auto list = GetDlgItem(window, ui::control_id::playlist);
-        expect("GUI list selection is valid", send(list, LB_SETCURSEL, index), static_cast<LRESULT>(index));
+        expect("GUI list selection is valid", send(list, LB_SETCURSEL, index, 0, location), static_cast<LRESULT>(index));
         (void)send(window, WM_COMMAND, MAKEWPARAM(ui::control_id::playlist, play ? LBN_DBLCLK : LBN_SELCHANGE),
-            reinterpret_cast<LPARAM>(list));
+            reinterpret_cast<LPARAM>(list), location);
     }
     void key(UINT key, int target = 0, bool repeat = false) const
     {
@@ -320,7 +334,8 @@ public:
         probe_focus(2);
         expect("GUI focus test activates a different top-level window", static_cast<int>(activation_changed_.load()), 1);
     }
-    HWND require_keyboard_focus(const char* phase = "GUI")
+    HWND require_keyboard_focus(const char* phase = "GUI",
+        std::source_location location = std::source_location::current())
     {
         const auto target = focused_window();
         if (!target) {
@@ -334,7 +349,7 @@ public:
                 (active == window ? "player" : active ? "other" : "none") + ", foreground=" +
                 (foreground == window ? "player" : foreground ? "other" : "none") +
                 ", foreground PID=" + std::to_string(foreground_process) + ", test PID=" +
-                std::to_string(GetCurrentProcessId()) + ", class=" + foreground_class + ")");
+                std::to_string(GetCurrentProcessId()) + ", class=" + foreground_class + ")" + detail::location_suffix(location));
         }
         expect("GUI keyboard target belongs to the player",
             static_cast<int>(target == window || IsChild(window, target)), 1);
@@ -351,12 +366,15 @@ public:
         expect("focused GUI key release is queued", PostMessageW(target, WM_KEYUP, key, (LPARAM{3} << 30) | 1), TRUE);
     }
     enum Modifier : unsigned { control = 1, shift = 2, alt = 4 };
-    void modified_key(UINT key, unsigned modifiers)
+    void modified_key(UINT key, unsigned modifiers,
+        std::source_location location = std::source_location::current())
     {
         activate_for_keyboard();
         modifiers_.store(modifiers);
         probe_focus(3);
-        if (!keyboard_state_ok_.load()) { throw std::runtime_error("Cannot prepare the GUI keyboard modifier state"); }
+        if (!keyboard_state_ok_.load()) {
+            throw std::runtime_error("Cannot prepare the GUI keyboard modifier state" + detail::location_suffix(location));
+        }
         try {
             focused_key(key);
             drain_input();
@@ -368,7 +386,9 @@ public:
             throw;
         }
         probe_focus(4);
-        if (!keyboard_state_ok_.load()) { throw std::runtime_error("Cannot restore the GUI keyboard modifier state"); }
+        if (!keyboard_state_ok_.load()) {
+            throw std::runtime_error("Cannot restore the GUI keyboard modifier state" + detail::location_suffix(location));
+        }
     }
     void mnemonic(wchar_t key)
     {
@@ -391,7 +411,7 @@ public:
         std::source_location location = std::source_location::current())
     {
         wait_until([&] {
-            if (text(ui::control_id::status) == expected) { return true; }
+            if (text(ui::control_id::status, location) == expected) { return true; }
             for (unsigned pulse = 0; driver && pulse < pulses; ++pulse) { driver->pulse(); }
             return false;
         }, "GUI state transition", location);
@@ -416,19 +436,25 @@ public:
             reinterpret_cast<WPARAM>(barrier_.get()), 0), TRUE);
         wait_for(barrier_.get(), "GUI input barrier");
     }
-    int finish()
+    int finish(std::source_location location = std::source_location::current())
     {
-        if (done_.wait_for(hang_budget(5s)) != std::future_status::ready) { fail("GUI did not finish closing"); }
+        if (done_.wait_for(hang_budget(5s)) != std::future_status::ready) {
+            fail("GUI did not finish closing" + detail::location_suffix(location));
+        }
         const int code = done_.get();
         expect("GUI test hooks release before their target thread exits", static_cast<int>(hook_cleanup_failed_), 0);
         expect("GUI window is destroyed after cleanup", IsWindow(window), FALSE);
         return code;
     }
-    static LRESULT send(HWND hwnd, UINT message, WPARAM wparam = 0, LPARAM lparam = 0)
+    static LRESULT send(HWND hwnd, UINT message, WPARAM wparam = 0, LPARAM lparam = 0,
+        std::source_location location = std::source_location::current())
     {
         DWORD_PTR result{};
+        SetLastError(ERROR_SUCCESS);
         if (!SendMessageTimeoutW(hwnd, message, wparam, lparam, SMTO_ABORTIFHUNG | SMTO_BLOCK, 500, &result)) {
-            throw std::runtime_error("GUI stopped responding to a window message");
+            const auto error = GetLastError();
+            throw std::runtime_error("gui_send_failed message=" + std::to_string(message) + " win32=" +
+                std::to_string(error) + detail::location_suffix(location));
         }
         return static_cast<LRESULT>(result);
     }
@@ -442,12 +468,13 @@ public:
     }
     // A logoff's WM_QUERYENDSESSION or WM_ENDSESSION. The product may wait up
     // to its own bound for the release, longer than send() allows.
-    LRESULT session_end(UINT message, bool ending) const
+    LRESULT session_end(UINT message, bool ending,
+        std::source_location location = std::source_location::current()) const
     {
         DWORD_PTR result{};
         if (!SendMessageTimeoutW(window, message, ending, ENDSESSION_LOGOFF, SMTO_BLOCK,
             static_cast<UINT>(hang_budget(10s).count()), &result)) {
-            throw std::runtime_error("GUI did not return from a session-end message");
+            throw std::runtime_error("GUI did not return from a session-end message" + detail::location_suffix(location));
         }
         return static_cast<LRESULT>(result);
     }
@@ -712,6 +739,26 @@ void check_playlist_pcm(const std::vector<MockAsio::Block>& blocks, const Bytes&
 {
     expect_true("playlist PCM capture covers every source frame", blocks.size() * GuiDriver::frames * 4 >= expected.size());
     check_pcm16_capture(blocks, GuiDriver::frames, expected);
+}
+
+void test_message_failure_diagnostic()
+{
+    bool rejected{};
+    try {
+        Gui::send(nullptr, WM_NULL);
+    } catch (const std::runtime_error& error) {
+        rejected = true;
+        const std::string_view message(error.what());
+        constexpr std::string_view prefix = "gui_send_failed message=0 win32=";
+        expect_true("GUI send failure identifies the message and Win32 error", message.starts_with(prefix));
+        const auto location = message.find(" (player_window_tests.cpp:");
+        expect_true("GUI send failure identifies its source location", location != std::string_view::npos);
+        const auto code = message.substr(prefix.size(), location - prefix.size());
+        expect_true("GUI send failure exposes only a bounded numeric Win32 code", !code.empty() && code.size() <= 10 &&
+            std::ranges::all_of(code, [](char value) { return value >= '0' && value <= '9'; }));
+        expect_true("GUI send failure does not include a full source path", message.find_first_of("\\/") == std::string_view::npos);
+    }
+    expect_true("an invalid window message is rejected", rejected);
 }
 
 void test_transport_availability()
@@ -1104,7 +1151,9 @@ void test_playlist_display_and_continuous_playback()
         ~RemoveDirectory() { std::error_code error; std::filesystem::remove_all(path, error); }
     } cleanup{directory};
     const auto nested = directory / std::wstring(120, L'x') / std::wstring(120, L'y');
-    std::filesystem::create_directories(nested);
+    std::error_code directory_error;
+    std::filesystem::create_directories(nested, directory_error);
+    expect("long Unicode GUI fixture directory can be created", directory_error.value(), 0);
     const auto a = pcm16_ramp(2, 3, 100);
     const auto b = pcm16_ramp(2, 97, 1000);
     const auto c = pcm16_ramp(2, 11, 3000);
@@ -1173,6 +1222,7 @@ void test_playlist_display_and_continuous_playback()
     gui.settled(L"Playing");
     gui.settled(L"Stopped", &driver, GuiDriver::run_pulses);
     expect("Play after EOF Stop starts one new run", driver.starts, 2);
+    expect("Play after EOF Stop records the new completed run", driver.captures.size(), 2);
     check_playlist_pcm(driver.captures.at(1), c.payload);
     gui.request_close();
     expect("playlist completion closes cleanly", gui.finish(), 0);
@@ -3139,6 +3189,7 @@ int wavplay_test::run_player_window_tests()
     }
     suite.run("GUI command line defaults to playlist and keeps the single-WAV entry point", test_arguments);
     suite.run("GUI --wav paths keep spaces and quotes as the CRT argv parser splits them", test_command_line_quoting);
+    suite.run("GUI message failures include a bounded diagnostic and source location", test_message_failure_diagnostic);
     suite.run("GUI command availability preserves pending receipts, refusals and faults", test_transport_availability);
     suite.run("GUI timing formats all rates and 64-bit lengths without overflow", test_playback_time_format);
     suite.run("GUI integer text equals the former std::format text and omits unverified rates", test_integer_text);

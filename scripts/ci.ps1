@@ -32,6 +32,26 @@ function Write-PublicDiagnostic([string]$Line) {
         Write-Output ('{0} {1} {2} s' -f $Matches.verdict, $Matches.suite, $Matches.seconds)
     } elseif ($Line -match '^\[FAIL\] (?<case>[A-Za-z0-9][A-Za-z0-9 ,.''()/_+<>=-]{0,239}): ') {
         $message = '[FAIL] ' + $Matches.case
+        $detail = $Line.Substring($Matches[0].Length)
+        $exception = $null
+        # Only known standard types are public; arbitrary RTTI names and what()
+        # text can contain private fixture details.
+        if ($detail -cmatch '^(?:class |struct )?(?<exception>std::(?:runtime_error|logic_error|out_of_range|invalid_argument|length_error|domain_error|range_error|overflow_error|underflow_error|system_error|filesystem::filesystem_error|bad_alloc|bad_array_new_length|bad_cast|bad_typeid|exception)): ') {
+            $exception = $Matches.exception
+            $message += ': exception=' + $exception
+            $detail = $detail.Substring($Matches[0].Length)
+        }
+        # A GUI send failure has no payload or HWND in its public diagnostic.
+        # Match the entire fixed schema, then format only valid UINT/DWORD values.
+        if ($exception -ceq 'std::runtime_error' -and
+            $detail -cmatch '^gui_send_failed message=(?<messageId>[0-9]{1,10}) win32=(?<win32>[0-9]{1,10})(?: \([A-Za-z0-9_-]+\.(?:cpp|h):[0-9]+\))?$') {
+            [uint32]$messageId = 0
+            [uint32]$win32 = 0
+            if ([uint32]::TryParse($Matches.messageId, [ref]$messageId) -and
+                [uint32]::TryParse($Matches.win32, [ref]$win32)) {
+                $message += '; gui_send_failed message=' + $messageId + ' win32=' + $win32
+            }
+        }
         if ($Line -match ': expected (?<expected>-?\d+|true|false), got (?<actual>-?\d+|true|false)(?: \([A-Za-z0-9_-]+\.(?:cpp|h):\d+\))?$') {
             $message += ': expected ' + $Matches.expected + ', got ' + $Matches.actual
         }
