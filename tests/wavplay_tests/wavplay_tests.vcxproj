@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{F1473796-4CF3-44AE-86BD-9B1184A099A0}</ProjectGuid>
+    <RootNamespace>WAVPlayerTests</RootNamespace>
+    <ProjectName>wavplay_tests</ProjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(MSBuildThisFileDirectory)..\..\build\Common.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <!-- Test headers are included relative to this directory, e.g. "framework/test_suite.h". -->
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- runner: suite table and diagnostic CLI dispatch -->
+  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+  </ItemGroup>
+  <!-- framework, fixtures and test doubles shared by the suites -->
+  <ItemGroup>
+    <ClInclude Include="doubles\dac_queue_asio.h" />
+    <ClInclude Include="doubles\mock_asio.h" />
+    <ClInclude Include="doubles\registered_driver.h" />
+    <ClInclude Include="fixtures\call_gate.h" />
+    <ClInclude Include="fixtures\image_residency.h" />
+    <ClInclude Include="fixtures\playback_fixture.h" />
+    <ClInclude Include="fixtures\ring_fixture.h" />
+    <ClInclude Include="fixtures\sample_oracle.h" />
+    <ClInclude Include="fixtures\thread_state.h" />
+    <ClInclude Include="fixtures\track_player_fixture.h" />
+    <ClInclude Include="fixtures\ui_desktop_guard.h" />
+    <ClInclude Include="fixtures\wav_builder.h" />
+    <ClInclude Include="fixtures\wav_reader_fixture.h" />
+    <ClCompile Include="framework\failure_reporting.cpp" />
+    <ClInclude Include="framework\failure_reporting.h" />
+    <ClCompile Include="framework\supervisor.cpp" />
+    <ClInclude Include="framework\supervisor.h" />
+    <ClInclude Include="framework\test_suite.h" />
+    <ClInclude Include="framework\test_thread.h" />
+  </ItemGroup>
+  <!-- suites, grouped by the product layer under test -->
+  <ItemGroup>
+    <ClInclude Include="suites\suites.h" />
+    <ClCompile Include="suites\asio\driver_session_tests.cpp" />
+    <ClCompile Include="suites\asio\sample_types_tests.cpp" />
+    <ClCompile Include="suites\audio\planar_conversion_tests.cpp" />
+    <ClCompile Include="suites\control\playback_controller_tests.cpp" />
+    <ClCompile Include="suites\core\memory_tests.cpp" />
+    <ClCompile Include="suites\core\cpu_features_tests.cpp" />
+    <ClCompile Include="suites\core\message_wait_tests.cpp" />
+    <ClCompile Include="suites\core\system_sleep_tests.cpp" />
+    <ClCompile Include="suites\diagnostics\diagnostics_tests.cpp" />
+    <ClCompile Include="suites\media\wav_header_tests.cpp" />
+    <ClCompile Include="suites\media\wav_reader_tests.cpp" />
+    <ClCompile Include="suites\playback\output_format_tests.cpp" />
+    <ClCompile Include="suites\playback\playback_signal_tests.cpp" />
+    <ClCompile Include="suites\playback\rate_transition_tests.cpp" />
+    <ClCompile Include="suites\playback\segment_tests.cpp" />
+    <ClCompile Include="suites\playback\session_playback_tests.cpp" />
+    <ClCompile Include="suites\playback\track_output_types_tests.cpp" />
+    <ClCompile Include="suites\playback\track_player_tests.cpp" />
+    <ClCompile Include="suites\playback\track_source_formats_tests.cpp" />
+    <ClCompile Include="suites\playlist\playlist_tests.cpp" />
+    <ClCompile Include="suites\settings\device_config_tests.cpp" />
+    <ClCompile Include="suites\stream\prefetch_ring_tests.cpp" />
+    <ClCompile Include="suites\stream\ring_layout_tests.cpp" />
+    <ClCompile Include="suites\ui\player_window_tests.cpp" />
+    <ClCompile Include="suites\ui\single_instance_tests.cpp" />
+  </ItemGroup>
+  <!-- diagnostics: real-driver probes, auditions and measurements behind the CLI -->
+  <ItemGroup>
+    <ClCompile Include="diagnostics\audition.cpp" />
+    <ClInclude Include="diagnostics\audition.h" />
+    <ClCompile Include="diagnostics\capability_probe.cpp" />
+    <ClInclude Include="diagnostics\capability_probe.h" />
+    <ClCompile Include="diagnostics\controller_audition.cpp" />
+    <ClCompile Include="diagnostics\lifecycle_probe.cpp" />
+    <ClInclude Include="diagnostics\lifecycle_probe.h" />
+    <ClCompile Include="diagnostics\prefetch_measurement.cpp" />
+    <ClInclude Include="diagnostics\prefetch_measurement.h" />
+  </ItemGroup>
+  <Import Project="$(RepoRoot)build\WavplaySources.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

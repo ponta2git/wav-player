@@ -1,0 +1,34 @@
+// Version information only. No icon, and no manifest: the linker embeds
+// build/app.manifest.
+#include <winver.h>
+
+// The single product version. build/app.manifest's assemblyIdentity carries the
+// same value; change both together.
+#define WAVPLAY_VERSION(form) form(1, 0, 0, 0)
+#define WAVPLAY_VERSION_NUMBERS(major, minor, patch, build) major, minor, patch, build
+#define WAVPLAY_VERSION_TEXT(major, minor, patch, build) #major "." #minor "." #patch "." #build
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION WAVPLAY_VERSION(WAVPLAY_VERSION_NUMBERS)
+PRODUCTVERSION WAVPLAY_VERSION(WAVPLAY_VERSION_NUMBERS)
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "WAV Player"
+            VALUE "FileVersion", WAVPLAY_VERSION(WAVPLAY_VERSION_TEXT)
+            VALUE "ProductName", "WAV Player"
+            VALUE "ProductVersion", WAVPLAY_VERSION(WAVPLAY_VERSION_TEXT)
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

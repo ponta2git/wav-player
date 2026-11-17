@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <RepoRoot>$(MSBuildThisFileDirectory)</RepoRoot>
+    <BaseOutputPath>$(RepoRoot)out\</BaseOutputPath>
+    <BuildFlavor Condition="'$(EnableASAN)' == 'true'">$(Configuration)-ASan</BuildFlavor>
+    <BuildFlavor Condition="'$(BuildFlavor)' == ''">$(Configuration)</BuildFlavor>
+    <OutDir>$(BaseOutputPath)$(Platform)\$(BuildFlavor)\</OutDir>
+    <IntDir>$(BaseOutputPath)obj\$(ProjectName)\$(Platform)\$(BuildFlavor)\</IntDir>
+  </PropertyGroup>
+</Project>

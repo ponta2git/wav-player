@@ -1,0 +1,91 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.8.12009.203
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "wavplay", "src\app\wavplay.vcxproj", "{C1B6DA9C-B1E5-4F8A-B36E-8C59007673EC}"
+EndProject
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "wavplay_tests", "tests\wavplay_tests\wavplay_tests.vcxproj", "{F1473796-4CF3-44AE-86BD-9B1184A099A0}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{97493185-39D6-4DA4-B2EC-60EDD7A65B67}"
+	ProjectSection(SolutionItems) = preProject
+		.editorconfig = .editorconfig
+		.gitattributes = .gitattributes
+		.gitignore = .gitignore
+		AGENTS.md = AGENTS.md
+		LICENSE = LICENSE
+		README.md = README.md
+		build.cmd = build.cmd
+		settings.example.ini = settings.example.ini
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{1707D3FE-BA04-4328-B8E4-BE0845C2F0DF}"
+	ProjectSection(SolutionItems) = preProject
+		docs\architecture.md = docs\architecture.md
+		docs\asio-contract.md = docs\asio-contract.md
+		docs\dependencies.md = docs\dependencies.md
+		docs\requirements.md = docs\requirements.md
+		docs\test-specification.md = docs\test-specification.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Build and CI", "Build and CI", "{E1CC5155-BBAE-4C99-8A52-0C9C4A6E98DD}"
+	ProjectSection(SolutionItems) = preProject
+		.github\workflows\verify.yml = .github\workflows\verify.yml
+		.vsconfig = .vsconfig
+		build\app.manifest = build\app.manifest
+		build\Common.props = build\Common.props
+		build\WavplaySources.props = build\WavplaySources.props
+		build\public-files.txt = build\public-files.txt
+		Directory.Build.props = Directory.Build.props
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "scripts", "scripts", "{7BB27CFB-B384-463B-B2C5-1EDB83F10655}"
+	ProjectSection(SolutionItems) = preProject
+		scripts\build.ps1 = scripts\build.ps1
+		scripts\check-asio-drivers.ps1 = scripts\check-asio-drivers.ps1
+		scripts\check-project-layout.ps1 = scripts\check-project-layout.ps1
+		scripts\check-public-source.ps1 = scripts\check-public-source.ps1
+		scripts\ci.ps1 = scripts\ci.ps1
+		scripts\export-source.ps1 = scripts\export-source.ps1
+		scripts\fetch-asio-sdk.ps1 = scripts\fetch-asio-sdk.ps1
+		scripts\make-playlist.ps1 = scripts\make-playlist.ps1
+		scripts\tests\player-setup.tests.ps1 = scripts\tests\player-setup.tests.ps1
+		scripts\tests\source-publication.tests.ps1 = scripts\tests\source-publication.tests.ps1
+		scripts\verification\build-settings.ps1 = scripts\verification\build-settings.ps1
+		scripts\verification\realtime-code.ps1 = scripts\verification\realtime-code.ps1
+		scripts\verification\release-image.ps1 = scripts\verification\release-image.ps1
+		scripts\verification\startup-code.ps1 = scripts\verification\startup-code.ps1
+		scripts\verify.ps1 = scripts\verify.ps1
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Playback setup", "Playback setup", "{B566EF57-9DBF-4548-AF51-EAF24B414341}"
+	ProjectSection(SolutionItems) = preProject
+		packaging\player\README.txt = packaging\player\README.txt
+		packaging\player\setup.cmd = packaging\player\setup.cmd
+		packaging\player\setup.ps1 = packaging\player\setup.ps1
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C1B6DA9C-B1E5-4F8A-B36E-8C59007673EC}.Debug|x64.ActiveCfg = Debug|x64
+		{C1B6DA9C-B1E5-4F8A-B36E-8C59007673EC}.Debug|x64.Build.0 = Debug|x64
+		{C1B6DA9C-B1E5-4F8A-B36E-8C59007673EC}.Release|x64.ActiveCfg = Release|x64
+		{C1B6DA9C-B1E5-4F8A-B36E-8C59007673EC}.Release|x64.Build.0 = Release|x64
+		{F1473796-4CF3-44AE-86BD-9B1184A099A0}.Debug|x64.ActiveCfg = Debug|x64
+		{F1473796-4CF3-44AE-86BD-9B1184A099A0}.Debug|x64.Build.0 = Debug|x64
+		{F1473796-4CF3-44AE-86BD-9B1184A099A0}.Release|x64.ActiveCfg = Release|x64
+		{F1473796-4CF3-44AE-86BD-9B1184A099A0}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{1707D3FE-BA04-4328-B8E4-BE0845C2F0DF} = {97493185-39D6-4DA4-B2EC-60EDD7A65B67}
+		{E1CC5155-BBAE-4C99-8A52-0C9C4A6E98DD} = {97493185-39D6-4DA4-B2EC-60EDD7A65B67}
+		{7BB27CFB-B384-463B-B2C5-1EDB83F10655} = {97493185-39D6-4DA4-B2EC-60EDD7A65B67}
+		{B566EF57-9DBF-4548-AF51-EAF24B414341} = {97493185-39D6-4DA4-B2EC-60EDD7A65B67}
+	EndGlobalSection
+EndGlobal

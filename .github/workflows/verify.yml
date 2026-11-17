@@ -1,0 +1,32 @@
+name: Verify
+run-name: ${{ inputs.release_only && 'Verify (Release-only diagnostics)' || 'Verify (full)' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_only:
+        description: 'Release-only diagnostics; omit static analysis and ASan'
+        required: false
+        type: boolean
+        default: false
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-2025-vs2026
+    # Hosted Windows builds can take over 30 minutes including analysis and ASan.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: ${{ inputs.release_only && 'Verify source and Release x64 (diagnostic)' || 'Verify source and test x64 (full)' }}
+        shell: powershell
+        run: |
+          $releaseOnly = '${{ inputs.release_only }}' -eq 'true'
+          .\scripts\ci.ps1 -ReleaseOnly:$releaseOnly

@@ -1,0 +1,89 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ExternalIncludePath>$(RepoRoot)external\asiosdk\common;$(ExternalIncludePath)</ExternalIncludePath>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EnableASAN)' == 'true'">
+    <SupportJustMyCode>false</SupportJustMyCode>
+    <CopyAsanBinariesToOutDir>true</CopyAsanBinariesToOutDir>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <!-- stdcpp23 emits /std:c++23preview, so the compiler enforces the C++23 ceiling
+           (_HAS_CXX26=0); move to /std:c++23 once the toolset accepts it. -->
+      <LanguageStandard>stdcpp23</LanguageStandard>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <ConformanceMode>true</ConformanceMode>
+      <SDLCheck>true</SDLCheck>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <!-- The product requires AVX2 and its compiler-associated scalar extensions. The isolated
+           startup gate checks CPU and OS state before entering product code; see cpu_features.cpp.
+           /Zc:throwingNew: operator new throws (static CRT), so no null checks after new.
+           /Zc:preprocessor: the standard-conforming preprocessor.
+           /Brepro: reproducible objects (see the Link options below). -->
+      <AdditionalOptions>/utf-8 /Zc:__cplusplus /arch:AVX2 /Zc:throwingNew /Zc:preprocessor /Brepro %(AdditionalOptions)</AdditionalOptions>
+      <!-- Pin the Windows API surface to the minimum OS in docs/requirements.md: Windows 11 25H2
+           shares the 24H2 API set (NTDDI_WIN11_GE). The symbolic values expand after sdkddkver.h.
+           Review WindowsTargetPlatformVersion above and this pin in the same change: an SDK update
+           keeps these values; only raising the minimum OS in docs/requirements.md raises them.
+           UNICODE and _UNICODE come from CharacterSet=Unicode in both projects. -->
+      <PreprocessorDefinitions>_WIN32_WINNT=_WIN32_WINNT_WIN10;WINVER=_WIN32_WINNT_WIN10;NTDDI_VERSION=NTDDI_WIN11_GE;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- Release defines NDEBUG, the standard convention, so a plain assert checks only in Debug.
+           The MSVC STL checks follow _ITERATOR_DEBUG_LEVEL, not NDEBUG. scripts/verify.ps1 rejects
+           the CRT's _wassert in the Release executable. -->
+      <PreprocessorDefinitions Condition="'$(Configuration)' == 'Release'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary Condition="'$(Configuration)' == 'Debug'">MultiThreadedDebug</RuntimeLibrary>
+      <RuntimeLibrary Condition="'$(Configuration)' == 'Release'">MultiThreaded</RuntimeLibrary>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <Optimization Condition="'$(Configuration)' == 'Debug'">Disabled</Optimization>
+      <Optimization Condition="'$(Configuration)' == 'Release'">MaxSpeed</Optimization>
+      <FunctionLevelLinking Condition="'$(Configuration)' == 'Release'">true</FunctionLevelLinking>
+      <IntrinsicFunctions Condition="'$(Configuration)' == 'Release'">true</IntrinsicFunctions>
+      <!-- Release: whole-program optimization (/GL) with full, non-incremental /LTCG below, so code
+           generation never depends on a previous build. Item metadata, because this sheet is imported
+           after Microsoft.Cpp.props, which reads the WholeProgramOptimization property. The .obj files
+           then hold IL; review machine code in the executable or the link-time /FAcs listings
+           (docs/architecture.md, optimization policy). -->
+      <WholeProgramOptimization Condition="'$(Configuration)' == 'Release'">true</WholeProgramOptimization>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <OptimizeReferences Condition="'$(Configuration)' == 'Release'">true</OptimizeReferences>
+      <!-- EnableCOMDATFolding stays unset. Identical functions may share an address;
+           code must not rely on distinct function addresses. Do not enable explicit /OPT:ICF
+           (docs/architecture.md, optimization policy). -->
+      <LinkTimeCodeGeneration Condition="'$(Configuration)' == 'Release'">UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <TreatLinkerWarningAsErrors>true</TreatLinkerWarningAsErrors>
+      <!-- /CETCOMPAT:NO. CET shadow stacks and CFG are process-wide and would also change the
+           in-process ASIO driver's callback thread, so neither is enabled; Control Flow Guard and
+           Spectre mitigation stay at their off defaults. scripts/verify.ps1 audits the Release
+           headers against this decision; see docs/architecture.md. -->
+      <CETCompat>false</CETCompat>
+      <!-- /Brepro replaces the time stamp and PDB GUID with content hashes, and /PDBALTPATH keeps
+           only the PDB file name, so a rebuild of the same sources with the same toolset can give
+           the same bytes. /Brepro is undocumented: the hashes that verify.ps1 prints and the
+           two-directory rebuild in docs/test-specification.md remain the actual check. -->
+      <AdditionalOptions>/Brepro /PDBALTPATH:%_PDB% %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+    <Manifest>
+      <AdditionalManifestFiles>$(RepoRoot)build\app.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
+    </Manifest>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableASAN)' == 'true'">
+    <ClCompile>
+      <EnableASAN>true</EnableASAN>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <Target Name="CheckAsioSdk" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(RepoRoot)external\asiosdk\common\iasiodrv.h')"
+           Text="Extract Steinberg ASIO SDK 2.3.4 into external/asiosdk before building. See docs/dependencies.md." />
+  </Target>
+</Project>

@@ -1,0 +1,51 @@
+# Visual Studio user state
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+*.aps
+
+# Local agent state
+/.claude/
+/.codex/
+/.agents/
+
+# Build output
+/out/
+/x64/
+/Debug/
+/Release/
+*.obj
+*.pch
+*.res
+*.idb
+*.pdb
+*.ipdb
+*.iobj
+*.ilk
+*.tlog
+*.lastbuildstate
+*.log
+*.exe
+*.dll
+*.lib
+*.exp
+*.map
+*.asm
+
+# Local research, device observations, draft notes and publication audit records.
+# Keep durable product requirements/design/test procedures in docs/ instead.
+/private/
+
+# Runtime-local files
+settings.ini
+playlist.txt
+*.bak
+*.tmp
+
+# The developer supplies the official SDK locally.
+/external/
+/ASIO-SDK_*.zip

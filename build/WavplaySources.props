@@ -1,0 +1,129 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <WavplaySourceRoot>$(RepoRoot)src</WavplaySourceRoot>
+    <WavplaySourceDir>$(WavplaySourceRoot)\wavplay</WavplaySourceDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(WavplaySourceRoot);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <!-- core: platform utilities shared by every layer -->
+  <ItemGroup>
+    <ClInclude Include="$(WavplaySourceDir)\core\alignment.h" />
+    <ClInclude Include="$(WavplaySourceDir)\core\block_copy.h" />
+    <ClInclude Include="$(WavplaySourceDir)\core\byte_order.h" />
+    <ClCompile Include="$(WavplaySourceDir)\core\cpu_features.cpp">
+      <AdditionalOptions>/utf-8 /Zc:__cplusplus /arch:SSE4.2 /Zc:throwingNew /Zc:preprocessor /Brepro</AdditionalOptions>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+    </ClCompile>
+    <ClInclude Include="$(WavplaySourceDir)\core\cpu_features.h" />
+    <ClCompile Include="$(WavplaySourceDir)\core\memory.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\core\memory.h" />
+    <ClCompile Include="$(WavplaySourceDir)\core\message_wait.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\core\message_wait.h" />
+    <ClCompile Include="$(WavplaySourceDir)\core\system_sleep.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\core\system_sleep.h" />
+    <ClCompile Include="$(WavplaySourceDir)\core\thread_hints.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\core\thread_hints.h" />
+    <ClInclude Include="$(WavplaySourceDir)\core\win32.h" />
+  </ItemGroup>
+  <!-- audio: sample format vocabulary and pure conversion kernels -->
+  <ItemGroup>
+    <ClCompile Include="$(WavplaySourceDir)\audio\planar_conversion.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\audio\planar_conversion.h" />
+    <ClInclude Include="$(WavplaySourceDir)\audio\sample_format.h" />
+  </ItemGroup>
+  <!-- media: file access, WAV parsing and decoding -->
+  <ItemGroup>
+    <ClCompile Include="$(WavplaySourceDir)\media\read_only_file.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\media\read_only_file.h" />
+    <ClCompile Include="$(WavplaySourceDir)\media\wav_header.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\media\wav_header.h" />
+    <ClCompile Include="$(WavplaySourceDir)\media\wav_reader.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\media\wav_reader.h" />
+  </ItemGroup>
+  <!-- stream: gapless runs and the prefetch ring between the producer thread and callbacks -->
+  <ItemGroup>
+    <ClCompile Include="$(WavplaySourceDir)\stream\gapless_run.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\stream\gapless_run.h" />
+    <ClInclude Include="$(WavplaySourceDir)\stream\prefetch_policy.h" />
+    <ClCompile Include="$(WavplaySourceDir)\stream\prefetch_ring.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\stream\prefetch_ring.h" />
+    <ClCompile Include="$(WavplaySourceDir)\stream\ring_layout.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\stream\ring_layout.h" />
+  </ItemGroup>
+  <!-- asio: the Steinberg SDK boundary (driver lifetime, queries, sample types) -->
+  <ItemGroup>
+    <ClCompile Include="$(WavplaySourceDir)\asio\asio_error.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\asio\asio_error.h" />
+    <ClInclude Include="$(WavplaySourceDir)\asio\asio_sdk.h" />
+    <ClInclude Include="$(WavplaySourceDir)\asio\clock.h" />
+    <ClInclude Include="$(WavplaySourceDir)\asio\device_settings.h" />
+    <ClCompile Include="$(WavplaySourceDir)\asio\driver_queries.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\asio\driver_queries.h" />
+    <ClCompile Include="$(WavplaySourceDir)\asio\driver_registry.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\asio\driver_registry.h" />
+    <ClCompile Include="$(WavplaySourceDir)\asio\driver_session.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\asio\driver_session.h" />
+    <ClCompile Include="$(WavplaySourceDir)\asio\sample_types.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\asio\sample_types.h" />
+  </ItemGroup>
+  <!-- playback: the real-time engine (segments, requests, track control) -->
+  <ItemGroup>
+    <ClCompile Include="$(WavplaySourceDir)\playback\output_format.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\playback\output_format.h" />
+    <ClCompile Include="$(WavplaySourceDir)\playback\play_tracks.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\playback\play_tracks.h" />
+    <ClCompile Include="$(WavplaySourceDir)\playback\playback_signal.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\playback\playback_signal.h" />
+    <ClInclude Include="$(WavplaySourceDir)\playback\playback_types.h" />
+    <ClCompile Include="$(WavplaySourceDir)\playback\request.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\playback\request.h" />
+    <ClCompile Include="$(WavplaySourceDir)\playback\segment.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\playback\segment.h" />
+    <ClCompile Include="$(WavplaySourceDir)\playback\segment_renderer.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\playback\segment_renderer.h" />
+    <ClCompile Include="$(WavplaySourceDir)\playback\track_player.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\playback\track_player.h" />
+  </ItemGroup>
+  <!-- settings: startup-only, SDK-free device configuration -->
+  <ItemGroup>
+    <ClCompile Include="$(WavplaySourceDir)\settings\device_config.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\settings\device_config.h" />
+  </ItemGroup>
+  <!-- playlist: startup UTF-8 list and local media validation -->
+  <ItemGroup>
+    <ClCompile Include="$(WavplaySourceDir)\playlist\playlist.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\playlist\playlist.h" />
+  </ItemGroup>
+  <!-- control: the asynchronous playback controller and its STA -->
+  <ItemGroup>
+    <ClCompile Include="$(WavplaySourceDir)\control\playback_controller.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\control\playback_controller.h" />
+  </ItemGroup>
+  <!-- ui: the playlist Win32 window, exercised with injected ASIO in the tests -->
+  <ItemGroup>
+    <ClCompile Include="$(WavplaySourceDir)\ui\error_message.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\ui\error_message.h" />
+    <ClCompile Include="$(WavplaySourceDir)\ui\player_controls.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\ui\player_controls.h" />
+    <ClCompile Include="$(WavplaySourceDir)\ui\player_options.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\ui\player_options.h" />
+    <ClCompile Include="$(WavplaySourceDir)\ui\player_text.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\ui\player_text.h" />
+    <ClCompile Include="$(WavplaySourceDir)\ui\player_window.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\ui\player_window.h" />
+    <ClCompile Include="$(WavplaySourceDir)\ui\single_instance.cpp" />
+    <ClInclude Include="$(WavplaySourceDir)\ui\single_instance.h" />
+  </ItemGroup>
+  <!-- Optimization level is a per-directory policy (docs/architecture.md): the GUI, startup settings
+       and playlist code is optimized for size (/O1); every other layer, the control STA that owns
+       the driver and main.cpp keep /O2. Update, after the Include groups above, sets it for both
+       projects alike; scripts/check-project-layout.ps1 reads only Include items. -->
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <ClCompile Update="$(WavplaySourceDir)\ui\*.cpp;$(WavplaySourceDir)\settings\*.cpp;$(WavplaySourceDir)\playlist\*.cpp">
+      <Optimization>MinSpace</Optimization>
+    </ClCompile>
+  </ItemGroup>
+</Project>
