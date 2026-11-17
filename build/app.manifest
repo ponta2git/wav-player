@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <!-- Keep the app and native GUI tests under the same Windows contracts. -->
-  <assemblyIdentity type="win32" name="Wavplay.WindowsHost" version="1.0.0.0" processorArchitecture="amd64" />
+  <assemblyIdentity type="win32" name="Wavplay.WindowsHost" version="0.1.0.0" processorArchitecture="amd64" />
   <dependency>
     <dependentAssembly>
       <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls"
