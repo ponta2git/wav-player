@@ -75,8 +75,6 @@ src/wavplay/core/memory.cpp
 src/wavplay/core/memory.h
 src/wavplay/core/message_wait.cpp
 src/wavplay/core/message_wait.h
-src/wavplay/core/system_sleep.cpp
-src/wavplay/core/system_sleep.h
 src/wavplay/core/thread_hints.cpp
 src/wavplay/core/thread_hints.h
 src/wavplay/core/win32.h
@@ -160,7 +158,7 @@ tests/wavplay_tests/suites/control/playback_controller_tests.cpp
 tests/wavplay_tests/suites/core/cpu_features_tests.cpp
 tests/wavplay_tests/suites/core/memory_tests.cpp
 tests/wavplay_tests/suites/core/message_wait_tests.cpp
-tests/wavplay_tests/suites/core/system_sleep_tests.cpp
+tests/wavplay_tests/suites/core/thread_hints_tests.cpp
 tests/wavplay_tests/suites/diagnostics/diagnostics_tests.cpp
 tests/wavplay_tests/suites/media/wav_header_tests.cpp
 tests/wavplay_tests/suites/media/wav_reader_tests.cpp

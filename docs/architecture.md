@@ -10,7 +10,7 @@ WAV の読み込みと形式変換を先読みスレッドで済ませ、ASIO �
 
 | 層 | 責務と主な入口 | 直接依存できる製品層 |
 |---|---|---|
-| `core` | バイト順・整列・ブロックコピー、Win32 の資源・ページ・待機・電源要求 | なし |
+| `core` | バイト順・整列・ブロックコピー、Win32 の資源・ページ・待機 | なし |
 | `audio` | `SampleFormat`、`StreamFormat`、左右の出力を作る変換器 | `core` |
 | `media` | `ReadOnlyFile` がファイルを保護し、`WavReader` がヘッダー検査とフレーム位置を扱う | `core`、`audio` |
 | `stream` | `GaplessRun` が同一レートの曲をつなぎ、`PrefetchRing` が読み込みスレッドとリングを所有する | `core`、`audio`、`media` |
@@ -113,7 +113,7 @@ Extensible PCM 24/32 では上位24 bit が有効で、下位8 bit は全サン�
 
 1. 制御側がコールバック表と通知先を用意し、初期充填した区間の幅で選択ペアの `createBuffers` を呼ぶ。作成後に実レート、左右の型・有効状態、4半面の書き込み可能範囲と非重複、出力遅延を検証する。2秒を超える報告遅延は開始前に拒否して解放する。[バッファーの検証と部分失敗](asio-contract.md#任意機能と未定義時の復旧)
 2. Renderer が A（index 0）を無音にし、B（index 1）に開始無音または先頭の PCM を充填する。開始無音は `StartSilence`（既定100 ms、0～1000 ms）をブロック単位に切り上げた長さで、B から数える。初期充填後に生産者が失敗していれば開始せず `read_error` を返す。
-3. `core::SystemSleepGuard` が独立した `PowerRequestSystemRequired` を取得し、Renderer を接続してから `start` する。`start` の中で最初の A を要求されても次のブロックを渡せる。電源要求を取得できなければ `driver_error` として片付ける。排出・停止・バッファー解放まで要求を保持し、例外時も解く。画面点灯は要求しない。[Windows の電源要求](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-powersetrequest)
+3. Renderer を接続してから `start` する。`start` の中で最初の A を要求されても次のブロックを渡せる。
 4. `start` の成功後に `playing` と Play の完了番号を公開する。`PlaybackDiagnostics::buffer_capabilities` は確定レートと有効な範囲を幅選択前に記録し、`BufferSetup` は作成後の検証に成功した実幅を記録する。拒否された幅を「確保済み」と表示しない。双方を区間ごとの列に保持し、次の Play・再初期化で消す。
 
 ## 3. 曲間、一時停止、エラーの境界
