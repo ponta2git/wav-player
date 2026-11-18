@@ -11,7 +11,7 @@ WAV Playerの公開物は自作のソース一式。ビルドに必要なSDKは�
 
 ## ASIO SDKの取得
 
-リポジトリ直下で初回に `build.cmd -FetchSdk` を実行する。[取得スクリプト](../scripts/fetch-asio-sdk.ps1)が公式ZIPのSHA-256を照合し、`external/asiosdk/` へ展開する。SDKがすでにあれば `build.cmd` を使う。`-FetchSdk` は既存の展開先を上書きしない。[ビルド手順](../README.md#ビルドと検証)
+リポジトリ直下で初回に `build.cmd -FetchSdk` を実行する。[取得スクリプト](../scripts/fetch-asio-sdk.ps1)が公式ZIPのSHA-256を照合し、`external/asiosdk/` へ展開する。SDKがすでにあれば `build.cmd` を使う。`-FetchSdk` は既存の展開先を上書きしない。[ビルド手順](../README.md#ビルド)
 
 | 公式ZIP | バイト数 | SHA-256 |
 |---|---:|---|
@@ -29,7 +29,7 @@ WAV Playerの公開物は自作のソース一式。ビルドに必要なSDKは�
 
 ## ソース公開とローカルビルド
 
-`build.cmd` が作る `out/player/` は、利用者が自分のビルドPCから再生PCへコピーするためのもの。リポジトリやReleaseにSDK・CRT・実行ファイル・再生用フォルダーのZIPは含めない。CIも実行物を配布せず、詳細ログはrunner内に置く。公開ログの範囲と全検証・Release限定診断の違いは[ビルドと検証](../README.md#ビルドと検証)を参照する。
+`build.cmd` が作る `out/player/` は、利用者が自分のビルドPCから再生PCへコピーするためのもの。リポジトリやReleaseにSDK・CRT・実行ファイル・再生用フォルダーのZIPは含めない。CIも実行物を配布せず、詳細ログはrunner内に置く。公開ログの範囲と全検証・Release限定診断の違いは[試験仕様](test-specification.md#ローカルとciの全検証)を参照する。
 
 ## バイナリを再配布する場合
 

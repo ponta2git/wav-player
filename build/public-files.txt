@@ -13,6 +13,7 @@ Directory.Build.props
 docs/architecture.md
 docs/asio-contract.md
 docs/dependencies.md
+docs/development.md
 docs/requirements.md
 docs/test-build.md
 docs/test-playback.md
