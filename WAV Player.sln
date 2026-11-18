@@ -25,6 +25,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{1707D3FE-B
 		docs\architecture.md = docs\architecture.md
 		docs\asio-contract.md = docs\asio-contract.md
 		docs\dependencies.md = docs\dependencies.md
+		docs\development.md = docs\development.md
 		docs\requirements.md = docs\requirements.md
 		docs\test-build.md = docs\test-build.md
 		docs\test-playback.md = docs\test-playback.md
