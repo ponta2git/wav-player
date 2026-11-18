@@ -1,6 +1,6 @@
 # 音声データ・再生制御の自動試験
 
-Windows x64の開発環境で、WAVの読み取りから再生制御までの受け入れ条件を確かめる。ドライバー固有の呼び出しには模擬ASIOを使用する。全検証の実行と試験群の切り分けは[試験仕様](test-specification.md#ドライバーなしで判定する項目)、実際の画面と物理出力は[実機試験の手順](test-specification.md#実機試験の手順)に従う。
+Windows x64の開発環境で、WAVの読み取りから再生制御までの受け入れ条件を確かめる。ドライバー固有の呼び出しには模擬ASIOを使用する。[試験群の実行方法](test-specification.md#ドライバーなしで判定する項目)・[Win32 GUIの自動試験](test-specification.md#guiの接続)・[物理出力を確かめる実機試験](test-specification.md#実機試験の手順)
 
 ## 音声入力と再生制御
 
