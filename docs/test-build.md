@@ -6,6 +6,8 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 
 `scripts/check-project-layout.ps1` は登録・依存・文書を調べる。評価済みのコンパイル設定は `scripts/verification/build-settings.ps1` が両プロジェクトで調べる。
 
+`scripts/tests/project-layout.tests.ps1` は公開対象の複製へ「構成の整合」「製品の文字列の整形」「文書の見出しへのリンク」の違反を1つずつ加え、`check-project-layout.ps1` がその理由で拒否すること、コメントだけの言及と外部リンクを合格にすることをCIで確かめる。
+
 **構成の整合**
 
 - 入力・操作　共有・専用ソース登録、直接の層間include、`playback`・`control` の公開ヘッダー、SDK境界、`ui`・`main.cpp`・`playback_controller.h` の推移的なSDK非依存、下位層の試験群の直接の依存、試験ファイルと `suites.h` の表、Solution Items。
@@ -80,7 +82,7 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 - 入力・操作
 
   - Releaseの `wavplay.exe` と隣のPDB。否定確認は、木の複製の `SegmentRenderer::render` に `OutputDebugStringW`・AVX512の組み込み関数・可変長の `memcpy` を加え、または `silence` を `memset` に戻して `out\` 以外へ出力した検証用ビルドと、実際の逆アセンブルを書き換えた入力。
-  - いずれも `[Management.Automation.Language.Parser]::ParseFile` で `scripts/verify.ps1` から `Get-CheckedOutput` と `Assert-Rejected` の定義を取り出し、`scripts/verification/realtime-code.ps1` と `startup-code.ps1` の関数定義を読み込む。
+  - いずれも `[Management.Automation.Language.Parser]::ParseFile` で `scripts/verify.ps1` から `Get-CheckedOutput` と `Assert-Rejected` の定義を取り出し、`scripts/verification/disassembly.ps1`・`realtime-code.ps1`・`startup-code.ps1` の関数定義を読み込む。
   - `Assert-RealTimeCode` に、PDBを隣に置いた実行ファイルと `dumpbin.exe` のパスを渡して監査する。書き換えた入力は、`/disasm:nobytes` の呼び出しにだけ用意した出力を返す `Get-CheckedOutput` を後から定義して与える。呼び出し先と入口を `wavplay::ui`・`wavplay::settings`・`wavplay::playlist` の装飾名・非装飾名へ改名した入力も与える。
 
 - 合格条件

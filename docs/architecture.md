@@ -271,4 +271,4 @@ Release は上記の起動ガードを除き両プロジェクトで `/GL` と�
 | `suites/playback/`、`control/`・`ui/` の試験群 | 一区間の音声と停止、異レートの機器呼び出し順、入力形式と出力型の時系列、操作番号と実ウィンドウの接続をそれぞれ試す |
 | `diagnostics/` | `--probe-asio`、`--probe-asio-rate-lifecycle`、`--audition-asio*`、`--measure-prefetch`。先読み測定は音源形式と ASIO 出力名を選べる。実機や測定の入口では製品と同様にイメージ固定を一度試みる |
 
-`scripts/verify.ps1` がビルド・静的解析・試験を順に実行する。`scripts/verification/` では `build-settings.ps1` が評価済み MSBuild 設定、`release-image.ps1` が PE・manifest・version、`realtime-code.ps1` がコールバックから到達する機械語、`startup-code.ps1` が起動ガード前と拒否後の到達先を監査する。PE・取り込み DLL・機械語の自己検査は違反を入れた入力の拒否も確認する。詳細なケースと環境は[試験仕様](test-specification.md)を参照する。
+`scripts/verify.ps1` がビルド・静的解析・試験を順に実行する。`scripts/verification/` では `build-settings.ps1` が評価済み MSBuild 設定、`release-image.ps1` が PE・manifest・version、`realtime-code.ps1` がコールバックから到達する機械語、`startup-code.ps1` が起動ガード前と拒否後の到達先を監査する。機械語の2つの監査は、逆アセンブルの読み方を `disassembly.ps1` で共有する。PE・取り込み DLL・機械語の自己検査は違反を入れた入力の拒否も確認する。詳細なケースと環境は[試験仕様](test-specification.md)を参照する。

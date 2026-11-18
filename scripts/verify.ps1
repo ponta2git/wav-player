@@ -10,8 +10,9 @@ param(
     [string]$Configuration = 'All',
     [switch]$Analyze,
     [switch]$IncludeASan,
-    [ValidateRange(1, 64)]
-    [int]$Jobs = 0 # 0: wavplay_tests.exe chooses (half the logical processors, at most 4).
+    # 0: wavplay_tests.exe chooses (half the logical processors, at most 4).
+    [ValidateRange(0, 64)]
+    [int]$Jobs = 0
 )
 
 Set-StrictMode -Version Latest
@@ -50,30 +51,117 @@ function Assert-Rejected {
     }
 }
 
-$root = Split-Path -Parent $PSScriptRoot
-# These files define audits only; this entry point owns build/test orchestration.
+# These files define functions only; this entry point owns build/test
+# orchestration and the exit-code checks above, which the audits call.
+. (Join-Path $PSScriptRoot 'support/visual-studio.ps1')
 . (Join-Path $PSScriptRoot 'verification/build-settings.ps1')
 . (Join-Path $PSScriptRoot 'verification/release-image.ps1')
+. (Join-Path $PSScriptRoot 'verification/disassembly.ps1')
 . (Join-Path $PSScriptRoot 'verification/realtime-code.ps1')
 . (Join-Path $PSScriptRoot 'verification/startup-code.ps1')
+
+# The tools of the toolset and Windows SDK that MSBuild selects for the product.
+function Get-BuildTools {
+    param([string]$Installation, [string]$Project)
+    $msbuild = Join-Path $Installation 'MSBuild\Current\Bin\amd64\MSBuild.exe'
+    $properties = (Get-CheckedOutput $msbuild @($Project, '/nologo', '/p:Platform=x64', '/p:Configuration=Release',
+        '/getProperty:VCToolsInstallDir,WindowsSdkDir,WindowsTargetPlatformVersion') | Out-String | ConvertFrom-Json).Properties
+    $bin = Join-Path $properties.VCToolsInstallDir 'bin\Hostx64\x64'
+    [pscustomobject]@{
+        MSBuild = $msbuild
+        Dumpbin = Join-Path $bin 'dumpbin.exe'
+        Symbolizer = Join-Path $bin 'llvm-symbolizer.exe'
+        ManifestTool = Join-Path $properties.WindowsSdkDir "bin\$($properties.WindowsTargetPlatformVersion)\x64\mt.exe"
+        ToolsVersion = Split-Path -Leaf $properties.VCToolsInstallDir.TrimEnd('\')
+        SdkVersion = $properties.WindowsTargetPlatformVersion
+    }
+}
+
+# The MSBuild arguments that rebuild one profile of the solution.
+function Get-RebuildArguments {
+    param([string]$Solution, [string]$BuildProfile, [bool]$Analyze)
+    $arguments = @($Solution, '/nologo', '/verbosity:minimal', '/t:Rebuild', '/p:Platform=x64')
+    if ($BuildProfile -eq 'Debug-ASan') {
+        # Both projects clean and copy the same ASan runtime DLL in OutDir.
+        # Serialize their Rebuilds so one Clean cannot race the other's copy;
+        # /MP still compiles sources in parallel inside each project.
+        return $arguments + @('/m:1', '/p:Configuration=Debug', '/p:EnableASAN=true')
+    }
+    $arguments += '/m', "/p:Configuration=$BuildProfile"
+    if ($Analyze) {
+        $arguments += '/p:RunCodeAnalysis=true', '/p:CodeAnalysisTreatWarningsAsErrors=true'
+    }
+    $arguments
+}
+
+# Audits the binaries of one built profile. Every profile embeds the application
+# manifest; the Release product also carries the version information and passes
+# the image and machine code audits.
+function Assert-BuildOutput {
+    param([string]$OutputDirectory, [string]$BuildProfile, $Tools)
+    $product = Join-Path $OutputDirectory 'wavplay.exe'
+    $binaries = @($product, (Join-Path $OutputDirectory 'wavplay_tests.exe'))
+    foreach ($binary in $binaries) {
+        $version = Assert-ApplicationManifest $binary $Tools.ManifestTool
+        if ($BuildProfile -eq 'Release' -and $binary -eq $product) {
+            Assert-VersionInfo $binary $version
+        }
+    }
+    if ($BuildProfile -ne 'Release') {
+        return
+    }
+    Assert-ReleaseImage $product $Tools.Dumpbin
+    Assert-RealTimeCode $product $Tools.Dumpbin
+    # Identify the audited binaries for local validation. The
+    # hashes are printed, not asserted: other toolsets legitimately differ.
+    Write-Output "Toolset: MSVC $($Tools.ToolsVersion), Windows SDK $($Tools.SdkVersion)"
+    foreach ($binary in $binaries) {
+        $hash = Get-FileHash -LiteralPath $binary -Algorithm SHA256
+        Write-Output "SHA-256 $($hash.Hash)  $(Split-Path -Leaf $binary)"
+    }
+}
+
+# Runs the test executable of one profile. The sanitized profile must really
+# load the sanitizer runtime, and runs with its options for this call only.
+function Invoke-TestExecutable {
+    param([string]$TestExecutable, [string[]]$Arguments, [string]$BuildProfile, $Tools)
+    if ($BuildProfile -ne 'Debug-ASan') {
+        Invoke-Checked $TestExecutable $Arguments
+        return
+    }
+    $imports = @(Get-CheckedOutput $Tools.Dumpbin @('/nologo', '/dependents', $TestExecutable))
+    if (-not @($imports -match '^\s*clang_rt\.asan\w*_dynamic-x86_64\.dll\s*$').Count) {
+        throw 'The ASan test executable does not import the x64 sanitizer runtime.'
+    }
+    $oldSymbolizer = $env:ASAN_SYMBOLIZER_PATH
+    $oldOptions = $env:ASAN_OPTIONS
+    try {
+        $env:ASAN_SYMBOLIZER_PATH = $Tools.Symbolizer
+        $env:ASAN_OPTIONS = 'halt_on_error=1'
+        Invoke-Checked $TestExecutable $Arguments
+    } finally {
+        $env:ASAN_SYMBOLIZER_PATH = $oldSymbolizer
+        $env:ASAN_OPTIONS = $oldOptions
+    }
+}
+
+$stages = [Collections.Generic.List[string]]::new()
+$clock = [Diagnostics.Stopwatch]::new()
+# Records the time since the previous stage ended under Name.
+function Complete-Stage([string]$Name) {
+    $script:stages.Add(('{0,-24} {1,6:N0} s' -f $Name, $script:clock.Elapsed.TotalSeconds))
+    $script:clock.Restart()
+}
+
+$root = Split-Path -Parent $PSScriptRoot
 & (Join-Path $PSScriptRoot 'check-project-layout.ps1')
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-$components = @('Microsoft.VisualStudio.Component.VC.Tools.x86.x64', 'Microsoft.VisualStudio.Component.Windows11SDK.26100')
+$sanitizerComponents = @()
 if ($IncludeASan) {
-    $components += 'Microsoft.VisualStudio.Component.VC.ASAN'
+    $sanitizerComponents += 'Microsoft.VisualStudio.Component.VC.ASAN'
 }
-$install = & $vswhere -latest -products '*' -version '[18,19)' -requires $components -property installationPath
-if ($LASTEXITCODE -ne 0 -or -not $install) {
-    throw 'Install the Visual Studio 2026 components listed in .vsconfig.'
-}
-$msbuild = Join-Path $install 'MSBuild\Current\Bin\amd64\MSBuild.exe'
 $solution = Join-Path $root 'WAV Player.sln'
 $project = Join-Path $root 'src\app\wavplay.vcxproj'
-$buildPaths = (Get-CheckedOutput $msbuild @($project, '/nologo', '/p:Platform=x64', '/p:Configuration=Release',
-    '/getProperty:VCToolsInstallDir,WindowsSdkDir,WindowsTargetPlatformVersion') | Out-String | ConvertFrom-Json).Properties
-$tools = Join-Path $buildPaths.VCToolsInstallDir 'bin\Hostx64\x64'
-$dumpbin = Join-Path $tools 'dumpbin.exe'
-$manifestTool = Join-Path $buildPaths.WindowsSdkDir "bin\$($buildPaths.WindowsTargetPlatformVersion)\x64\mt.exe"
+$tools = Get-BuildTools (Find-VisualStudio $sanitizerComponents) $project
 
 $profiles = @($Configuration)
 if ($Configuration -eq 'All') {
@@ -89,76 +177,24 @@ $testArguments = @()
 if ($Jobs) {
     $testArguments = @('--jobs', "$Jobs")
 }
-$stages = [Collections.Generic.List[string]]::new()
-$clock = [Diagnostics.Stopwatch]::StartNew()
-function Complete-Stage([string]$Name) {
-    $stages.Add(('{0,-24} {1,6:N0} s' -f $Name, $clock.Elapsed.TotalSeconds))
-    $clock.Restart()
-}
 
-Assert-BuildSettings $msbuild @($project, (Join-Path $root 'tests\wavplay_tests\wavplay_tests.vcxproj')) (Join-Path $root 'src')
+$clock.Start()
+Assert-BuildSettings $tools.MSBuild @($project, (Join-Path $root 'tests\wavplay_tests\wavplay_tests.vcxproj')) (Join-Path $root 'src')
 Complete-Stage 'Build settings'
 
-foreach ($profile in $profiles) {
-    $buildOptions = @($solution, '/nologo', '/verbosity:minimal', '/t:Rebuild', '/p:Platform=x64')
-    if ($profile -eq 'Debug-ASan') {
-        # Both projects clean and copy the same ASan runtime DLL in OutDir.
-        # Serialize their Rebuilds so one Clean cannot race the other's copy;
-        # /MP still compiles sources in parallel inside each project.
-        $buildOptions += '/m:1', '/p:Configuration=Debug', '/p:EnableASAN=true'
-    } else {
-        $buildOptions += '/m', "/p:Configuration=$profile"
-        if ($Analyze) {
-            $buildOptions += '/p:RunCodeAnalysis=true', '/p:CodeAnalysisTreatWarningsAsErrors=true'
-        }
-    }
-    Write-Output "== Build $profile|x64 =="
-    Invoke-Checked $msbuild $buildOptions
+foreach ($buildProfile in $profiles) {
+    Write-Output "== Build $buildProfile|x64 =="
+    Invoke-Checked $tools.MSBuild (Get-RebuildArguments $solution $buildProfile $Analyze)
+    $outputDirectory = Join-Path $root "out\x64\$buildProfile"
+    Assert-BuildOutput $outputDirectory $buildProfile $tools
+    Complete-Stage "Build $buildProfile"
 
-    $outputDir = Join-Path $root "out\x64\$profile"
-    foreach ($binary in 'wavplay.exe', 'wavplay_tests.exe') {
-        $version = Assert-ApplicationManifest (Join-Path $outputDir $binary) $manifestTool
-        if ($profile -eq 'Release' -and $binary -eq 'wavplay.exe') {
-            Assert-VersionInfo (Join-Path $outputDir $binary) $version
-        }
-    }
-    if ($profile -eq 'Release') {
-        Assert-ReleaseImage (Join-Path $outputDir 'wavplay.exe') $dumpbin
-        Assert-RealTimeCode (Join-Path $outputDir 'wavplay.exe') $dumpbin
-        # Identify the audited binaries for local validation. The
-        # hashes are printed, not asserted: other toolsets legitimately differ.
-        Write-Output "Toolset: MSVC $(Split-Path -Leaf $buildPaths.VCToolsInstallDir.TrimEnd('\')), Windows SDK $($buildPaths.WindowsTargetPlatformVersion)"
-        foreach ($binary in 'wavplay.exe', 'wavplay_tests.exe') {
-            $hash = Get-FileHash -LiteralPath (Join-Path $outputDir $binary) -Algorithm SHA256
-            Write-Output "SHA-256 $($hash.Hash)  $binary"
-        }
-    }
-    Complete-Stage "Build $profile"
-
-    if ($profile -notin $tested) {
+    if ($buildProfile -notin $tested) {
         continue
     }
-    Write-Output "== Test $profile|x64 =="
-    $testExe = Join-Path $outputDir 'wavplay_tests.exe'
-    if ($profile -eq 'Debug-ASan') {
-        $imports = Get-CheckedOutput $dumpbin @('/nologo', '/dependents', $testExe)
-        if (-not ($imports -match '^\s*clang_rt\.asan\w*_dynamic-x86_64\.dll\s*$')) {
-            throw 'The ASan test executable does not import the x64 sanitizer runtime.'
-        }
-        $oldSymbolizer = $env:ASAN_SYMBOLIZER_PATH
-        $oldOptions = $env:ASAN_OPTIONS
-        try {
-            $env:ASAN_SYMBOLIZER_PATH = Join-Path $tools 'llvm-symbolizer.exe'
-            $env:ASAN_OPTIONS = 'halt_on_error=1'
-            Invoke-Checked $testExe $testArguments
-        } finally {
-            $env:ASAN_SYMBOLIZER_PATH = $oldSymbolizer
-            $env:ASAN_OPTIONS = $oldOptions
-        }
-    } else {
-        Invoke-Checked $testExe $testArguments
-    }
-    Complete-Stage "Test $profile"
+    Write-Output "== Test $buildProfile|x64 =="
+    Invoke-TestExecutable (Join-Path $outputDirectory 'wavplay_tests.exe') $testArguments $buildProfile $tools
+    Complete-Stage "Test $buildProfile"
 }
 
 Write-Output '== Stage times =='

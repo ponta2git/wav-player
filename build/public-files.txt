@@ -30,9 +30,15 @@ scripts/ci.ps1
 scripts/export-source.ps1
 scripts/fetch-asio-sdk.ps1
 scripts/make-playlist.ps1
+scripts/support/public-manifest.ps1
+scripts/support/staging.ps1
+scripts/support/visual-studio.ps1
 scripts/tests/player-setup.tests.ps1
+scripts/tests/project-layout.tests.ps1
 scripts/tests/source-publication.tests.ps1
+scripts/tests/test-support.ps1
 scripts/verification/build-settings.ps1
+scripts/verification/disassembly.ps1
 scripts/verification/realtime-code.ps1
 scripts/verification/release-image.ps1
 scripts/verification/startup-code.ps1
