@@ -126,10 +126,10 @@ try {
     Pass 'Build refuses an existing transfer folder before building'
 
     $buildFixture = Join-Path $work 'build fixture'
-    foreach ($directory in @('scripts', 'packaging/player', 'external/asiosdk/common', 'out/x64/Release')) {
+    foreach ($directory in @('scripts/support', 'packaging/player', 'external/asiosdk/common', 'out/x64/Release')) {
         [IO.Directory]::CreateDirectory((Join-Path $buildFixture $directory)) | Out-Null
     }
-    foreach ($relative in @('scripts/build.ps1', 'scripts/fetch-asio-sdk.ps1', 'scripts/check-asio-drivers.ps1',
+    foreach ($relative in @('scripts/build.ps1', 'scripts/support/staging.ps1', 'scripts/support/visual-studio.ps1', 'scripts/fetch-asio-sdk.ps1', 'scripts/check-asio-drivers.ps1',
         'scripts/make-playlist.ps1', 'packaging/player/setup.cmd', 'packaging/player/setup.ps1',
         'packaging/player/README.txt', 'settings.example.ini', 'LICENSE')) {
         Copy-Item -LiteralPath (Join-Path $root $relative) -Destination (Join-Path $buildFixture $relative)
@@ -150,7 +150,8 @@ try {
     Pass 'Failed verification blocks packaging; successful packaging copies only the player allowlist'
 
     $fetchFixture = Join-Path $work 'fetch fixture'
-    [IO.Directory]::CreateDirectory((Join-Path $fetchFixture 'scripts')) | Out-Null
+    [IO.Directory]::CreateDirectory((Join-Path $fetchFixture 'scripts/support')) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $root 'scripts/support/staging.ps1') -Destination (Join-Path $fetchFixture 'scripts/support')
     Copy-Item -LiteralPath (Join-Path $root 'scripts/fetch-asio-sdk.ps1') -Destination (Join-Path $fetchFixture 'scripts')
     $badArchive = Join-Path $fetchFixture 'not-the-official-sdk.zip'
     Write-Text $badArchive 'wrong archive fixture'

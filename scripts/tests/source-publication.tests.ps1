@@ -7,12 +7,13 @@ $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $work = Join-Path $root ('out/source-tests-' + [Guid]::NewGuid().ToString('N'))
 $fixture = Join-Path $work 'input'
 $utf8 = [Text.UTF8Encoding]::new($false)
-foreach ($relative in 'input/build', 'input/scripts') { [void][IO.Directory]::CreateDirectory((Join-Path $work $relative)) }
-foreach ($name in 'check-public-source.ps1', 'export-source.ps1') {
+foreach ($relative in 'input/build', 'input/scripts/support') { [void][IO.Directory]::CreateDirectory((Join-Path $work $relative)) }
+foreach ($name in 'check-public-source.ps1', 'export-source.ps1', 'support/public-manifest.ps1', 'support/staging.ps1') {
     Copy-Item -LiteralPath (Join-Path $root "scripts/$name") -Destination (Join-Path $fixture "scripts/$name")
 }
 $manifest = Join-Path $fixture 'build/public-files.txt'
-$files = @('build/public-files.txt', 'scripts/check-public-source.ps1', 'scripts/export-source.ps1', 'settings.example.ini')
+$files = @('build/public-files.txt', 'scripts/check-public-source.ps1', 'scripts/export-source.ps1',
+    'scripts/support/public-manifest.ps1', 'scripts/support/staging.ps1', 'settings.example.ini')
 $check = Join-Path $fixture 'scripts/check-public-source.ps1'
 $export = Join-Path $fixture 'scripts/export-source.ps1'
 function Write-Manifest([string[]]$Entries) { [IO.File]::WriteAllLines($manifest, $Entries, $utf8) }
