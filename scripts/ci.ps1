@@ -3,8 +3,11 @@
 # scripts/verify.ps1 locally; never upload SDKs, executables or diagnostic dumps.
 # Each step runs in its own Windows PowerShell process; its exit code decides the
 # step, and only lines rebuilt by ConvertTo-PublicDiagnostic reach the public log.
-[CmdletBinding()]
-param([switch]$ReleaseOnly)
+[CmdletBinding(DefaultParameterSetName = 'Verification')]
+param(
+    [Parameter(ParameterSetName = 'Diagnostic')][switch]$ReleaseOnly,
+    [Parameter(ParameterSetName = 'Verification')][ValidateSet('Release', 'Debug')][string]$Worker
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -12,6 +15,12 @@ $ErrorActionPreference = 'Stop'
 # child's exception text, paths, driver diagnostics or arbitrary output. Returns
 # the public form of a line, or nothing for a line that has none.
 function ConvertTo-PublicDiagnostic([string]$Line) {
+    if ($Line -cmatch '\ATIMING (?<stage>Settings|(?:Build|Audit|Test)-(?:Debug|Release|Debug-ASan)|Release-Startup) (?<milliseconds>[0-9]{1,19}) ms\z') {
+        [long]$milliseconds = 0
+        if ([long]::TryParse($Matches.milliseconds, [ref]$milliseconds)) {
+            return 'TIMING {0} {1} ms' -f $Matches.stage, $milliseconds
+        }
+    }
     if ($Line -match '^\d+ suites in [\d.]+ s: \d+ passed, \d+ failed, \d+ timed out, \d+ crashed\.$' -or
         $Line -match '^== (Build|Test) (Debug|Release|Debug-ASan)\|x64 ==$' -or
         $Line -match '^Toolset: MSVC [\d.]+, Windows SDK [\d.]+$') {
@@ -91,20 +100,31 @@ function Invoke-Step([hashtable]$Step, [IO.TextWriter]$Log) {
     Write-Output ("[PASS] {0}" -f $Step.Name)
 }
 
-$verification = @{ Name = 'Build, analysis and native tests'; File = 'verify.ps1'; Arguments = @('-Analyze', '-IncludeASan') }
+$verification = @{ Name = 'Build, analysis and native tests'; File = 'verify.ps1'; Arguments = @('-Analyze', '-IncludeASan', '-TestReleaseStartup') }
 if ($ReleaseOnly) {
-    $verification = @{ Name = 'Release-only diagnostic build and native tests'; File = 'verify.ps1'; Arguments = @('-Configuration', 'Release') }
+    $verification.Name = 'Release-only diagnostic build and native tests'
+    $verification.Arguments = @('-Configuration', 'Release', '-TestReleaseStartup')
     Write-Output 'Verification mode: Release-only diagnostics (no static analysis or ASan)'
+} elseif ($Worker -eq 'Release') {
+    $verification.Arguments = @('-Configuration', 'Release', '-Analyze', '-CiWorker', '-TestReleaseStartup')
+    Write-Output 'Verification mode: Release x64 worker'
+} elseif ($Worker -eq 'Debug') {
+    $verification.Arguments = @('-Configuration', 'Debug', '-Analyze', '-IncludeASan', '-CiWorker')
+    Write-Output 'Verification mode: Debug and Debug-ASan x64 worker'
 } else {
     Write-Output 'Verification mode: full (static analysis, Release and ASan)'
 }
 $steps = @(
-    @{ Name = 'Public source files'; File = 'check-public-source.ps1'; Arguments = @('-Tracked') },
-    @{ Name = 'Source publication tests'; File = 'tests/source-publication.tests.ps1'; Arguments = @() },
-    @{ Name = 'Project layout tests'; File = 'tests/project-layout.tests.ps1'; Arguments = @() },
-    @{ Name = 'SDK download and integrity'; File = 'fetch-asio-sdk.ps1'; Arguments = @() },
-    $verification,
-    @{ Name = 'Player setup tests'; File = 'tests/player-setup.tests.ps1'; Arguments = @() }
+    if ($Worker -ne 'Debug') {
+        @{ Name = 'Public source files'; File = 'check-public-source.ps1'; Arguments = @('-Tracked') }
+        @{ Name = 'Source publication tests'; File = 'tests/source-publication.tests.ps1'; Arguments = @() }
+        @{ Name = 'Project layout tests'; File = 'tests/project-layout.tests.ps1'; Arguments = @() }
+    }
+    @{ Name = 'SDK download and integrity'; File = 'fetch-asio-sdk.ps1'; Arguments = @() }
+    $verification
+    if ($Worker -ne 'Debug') {
+        @{ Name = 'Player setup tests'; File = 'tests/player-setup.tests.ps1'; Arguments = @() }
+    }
 )
 
 # The detailed log exists only while this script runs: it is removed on success

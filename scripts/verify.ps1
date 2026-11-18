@@ -1,5 +1,5 @@
 # Builds, audits and tests the x64 configurations. The evaluated build settings
-# of both projects are audited first. Each build profile is rebuilt once (with
+# are audited first. Each build profile is rebuilt once (with
 # static analysis when -Analyze is given). The test suites run once per runtime
 # they can tell apart: Release, and the Debug runtime checks either in Debug or,
 # with -IncludeASan, in Debug-ASan, which adds the sanitizer to the same checks.
@@ -12,7 +12,11 @@ param(
     [switch]$IncludeASan,
     # 0: wavplay_tests.exe chooses (half the logical processors, at most 4).
     [ValidateRange(0, 64)]
-    [int]$Jobs = 0
+    [int]$Jobs = 0,
+    # The two full CI workers audit the profiles they build; Release owns the shared layout check.
+    [switch]$CiWorker,
+    # Requires an isolated Windows logon session with no running product instance.
+    [switch]$TestReleaseStartup
 )
 
 Set-StrictMode -Version Latest
@@ -145,16 +149,20 @@ function Invoke-TestExecutable {
     }
 }
 
-$stages = [Collections.Generic.List[string]]::new()
 $clock = [Diagnostics.Stopwatch]::new()
-# Records the time since the previous stage ended under Name.
+# ci.ps1 publishes only these fixed stage names and integer durations.
 function Complete-Stage([string]$Name) {
-    $script:stages.Add(('{0,-24} {1,6:N0} s' -f $Name, $script:clock.Elapsed.TotalSeconds))
+    Write-Output ('TIMING {0} {1} ms' -f $Name, $script:clock.ElapsedMilliseconds)
     $script:clock.Restart()
 }
 
 $root = Split-Path -Parent $PSScriptRoot
-& (Join-Path $PSScriptRoot 'check-project-layout.ps1')
+if ($TestReleaseStartup -and $Configuration -eq 'Debug') {
+    throw 'The product startup test requires a Release build.'
+}
+if (-not $CiWorker -or $Configuration -ne 'Debug') {
+    & (Join-Path $PSScriptRoot 'check-project-layout.ps1')
+}
 $sanitizerComponents = @()
 if ($IncludeASan) {
     $sanitizerComponents += 'Microsoft.VisualStudio.Component.VC.ASAN'
@@ -178,29 +186,37 @@ if ($Jobs) {
     $testArguments = @('--jobs', "$Jobs")
 }
 
-$clock.Start()
 $projects = @($project, (Join-Path $root 'src\wavplay\wavplay_core.vcxproj'),
     (Join-Path $root 'tests\wavplay_tests\wavplay_tests.vcxproj'))
 $auditProfiles = @('Debug', 'Release')
-if ($IncludeASan) { $auditProfiles += 'Debug-ASan' }
+if ($CiWorker) {
+    $auditProfiles = $profiles
+} elseif ($IncludeASan) {
+    $auditProfiles += 'Debug-ASan'
+}
+$clock.Start()
 Assert-BuildSettings $tools.MSBuild $projects (Join-Path $root 'src') $auditProfiles
-Complete-Stage 'Build settings'
+Complete-Stage 'Settings'
 
 foreach ($buildProfile in $profiles) {
     Write-Output "== Build $buildProfile|x64 =="
     Invoke-Checked $tools.MSBuild (Get-RebuildArguments $solution $buildProfile $Analyze)
+    Complete-Stage "Build-$buildProfile"
     $outputDirectory = Join-Path $root "out\x64\$buildProfile"
     Assert-BuildOutput $outputDirectory $buildProfile $tools
-    Complete-Stage "Build $buildProfile"
+    Complete-Stage "Audit-$buildProfile"
 
     if ($buildProfile -notin $tested) {
         continue
     }
     Write-Output "== Test $buildProfile|x64 =="
-    Invoke-TestExecutable (Join-Path $outputDirectory 'wavplay_tests.exe') $testArguments $buildProfile $tools
-    Complete-Stage "Test $buildProfile"
+    $testExecutable = Join-Path $outputDirectory 'wavplay_tests.exe'
+    Invoke-TestExecutable $testExecutable $testArguments $buildProfile $tools
+    Complete-Stage "Test-$buildProfile"
+    if ($TestReleaseStartup -and $buildProfile -eq 'Release') {
+        Invoke-Checked $testExecutable @('--test-product-startup', (Join-Path $outputDirectory 'wavplay.exe'))
+        Complete-Stage 'Release-Startup'
+    }
 }
 
-Write-Output '== Stage times =='
-$stages | ForEach-Object { Write-Output $_ }
 Write-Output "[PASS] Built $($profiles -join ', '); tested $($tested -join ', ')"
