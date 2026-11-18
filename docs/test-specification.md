@@ -20,7 +20,7 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1 -Analyze -IncludeASan
 ```
 
-1. 両プロジェクトの登録と評価済みビルド設定を監査する。
+1. 共有ライブラリと製品・試験の両EXEについて、登録と評価済みビルド設定を監査する。
 2. Debug・Release x64を静的解析付きで再ビルドし、Debug-ASanもビルドする。生成物は構成ごとの基準で監査する。
 3. ReleaseとDebug-ASanで試験群を実行する。Debugの実行時検査はDebug-ASanに含まれる。ソリューションのビルドやSDKヘッダーの検査だけでは再生機能の合否は決まらない。
 

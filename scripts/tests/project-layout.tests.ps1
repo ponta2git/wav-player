@@ -101,9 +101,15 @@ function Test-SourceRegistration {
     Assert-Rejected 'Source/Visual Studio registration mismatch'
     Edit-TreeText 'build/WavplaySources.props' '^([ \t]*<ClInclude Include="[^"]+" />\r?\n)' '$1$1'
     Assert-Rejected 'Duplicate source registrations'
-    Edit-TreeText 'tests/wavplay_tests/wavplay_tests.vcxproj' '^.*WavplaySources\.props.*\r?\n' ''
-    Assert-Rejected 'must import the shared product sources exactly once'
-    Complete-TestGroup 'unregistered and doubly registered sources and a missing shared import are rejected'
+    Edit-TreeText 'src/wavplay/wavplay_core.vcxproj' '^.*WavplaySources\.props.*\r?\n' ''
+    Assert-Rejected 'one import of WavplaySources.props'
+    Edit-TreeText 'tests/wavplay_tests/wavplay_tests.vcxproj' '(<ProjectReference Include=")[^"]+' '$1missing.vcxproj'
+    Assert-Rejected 'must link the shared library object inputs'
+    Edit-TreeText 'src/app/wavplay.vcxproj' '(<UseLibraryDependencyInputs>)true' '$1false'
+    Assert-Rejected 'must link the shared library object inputs'
+    Edit-TreeText 'src/app/wavplay.vcxproj' '^</Project>' '<Import Project="$(RepoRoot)build\WavplaySources.props" /></Project>'
+    Assert-Rejected 'compiles the shared library sources again'
+    Complete-TestGroup 'unregistered or duplicate sources, missing library inputs and duplicate compilation are rejected'
 }
 
 function Test-LayerDependencies {

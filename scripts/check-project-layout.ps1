@@ -86,19 +86,31 @@ function Assert-RegisteredSources([string]$Manifest, [string]$Directory, [string
     }
 }
 
-# The product sources are registered once, in the shared list that both projects
-# import; each project registers the sources of its own directory.
+# The library owns the shared source list. Both executables link its object
+# inputs and register only their own sources.
 function Assert-SourceRegistration {
     Assert-RegisteredSources (Join-Path $root 'build\WavplaySources.props') (Join-Path $sourceRoot 'wavplay') '$(WavplaySourceDir)\'
+    $library = Join-Path $sourceRoot 'wavplay\wavplay_core.vcxproj'
+    $sharedImport = '//*[local-name()="Import"][@Project="$(RepoRoot)build\WavplaySources.props"]'
+    [xml]$core = Get-Content -LiteralPath $library -Raw
+    if ($core.SelectNodes($sharedImport).Count -ne 1 -or
+        $core.SelectNodes('//*[local-name()="ClCompile" or local-name()="ClInclude" or local-name()="ResourceCompile"][@Include]').Count) {
+        throw 'The shared library must register its sources only through one import of WavplaySources.props.'
+    }
     foreach ($directory in 'src\app', 'tests\wavplay_tests') {
         $projectDirectory = Join-Path $root $directory
         $project = @(Get-ChildItem -LiteralPath $projectDirectory -Filter '*.vcxproj')
         if ($project.Count -ne 1) { throw "Expected one project in $projectDirectory" }
         Assert-RegisteredSources $project[0].FullName $projectDirectory
         [xml]$definition = Get-Content -LiteralPath $project[0].FullName -Raw
-        $imports = @($definition.SelectNodes('//*[local-name()="Import"]') |
-            Where-Object { $_.GetAttribute('Project') -eq '$(RepoRoot)build\WavplaySources.props' })
-        if ($imports.Count -ne 1) { throw "$directory must import the shared product sources exactly once." }
+        if ($definition.SelectNodes($sharedImport).Count) { throw "$directory compiles the shared library sources again." }
+        $references = @($definition.SelectNodes('//*[local-name()="ProjectReference"][@Include]') | Where-Object {
+            [IO.Path]::GetFullPath((Join-Path $projectDirectory $_.GetAttribute('Include'))) -eq $library
+        })
+        if ($references.Count -ne 1 -or
+            -not $references[0].SelectSingleNode('*[local-name()="UseLibraryDependencyInputs" and text()="true"]')) {
+            throw "$directory must link the shared library object inputs through one project reference."
+        }
     }
 }
 

@@ -122,6 +122,7 @@ src/wavplay/ui/player_window.cpp
 src/wavplay/ui/player_window.h
 src/wavplay/ui/single_instance.cpp
 src/wavplay/ui/single_instance.h
+src/wavplay/wavplay_core.vcxproj
 tests/wavplay_tests/diagnostics/audition.cpp
 tests/wavplay_tests/diagnostics/audition.h
 tests/wavplay_tests/diagnostics/capability_probe.cpp

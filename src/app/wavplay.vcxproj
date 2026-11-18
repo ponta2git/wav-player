@@ -61,7 +61,12 @@
   <ItemGroup>
     <ResourceCompile Include="wavplay.rc" />
   </ItemGroup>
-  <Import Project="$(RepoRoot)build\WavplaySources.props" />
+  <ItemGroup>
+    <ProjectReference Include="..\wavplay\wavplay_core.vcxproj">
+      <Project>{DD8899F3-472C-47D6-BC49-4F32ACB13038}</Project>
+      <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
+    </ProjectReference>
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

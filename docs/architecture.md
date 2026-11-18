@@ -25,7 +25,7 @@ WAV の読み込みと形式変換を先読みスレッドで済ませ、ASIO �
 
 ### 現在のコード配置
 
-製品の GUI 入口 [main.cpp](../src/app/main.cpp) が使うのは `ui` と `core` だけ。製品とコンソール試験は[同じ製品ソース一覧](../build/WavplaySources.props)をビルドする。代表的な変更箇所は次のとおり。
+製品の GUI 入口 [main.cpp](../src/app/main.cpp) が使うのは `ui` と `core` だけ。[共有ライブラリ](../src/wavplay/wavplay_core.vcxproj)が[製品ソース一覧](../build/WavplaySources.props)を構成ごとに一度コンパイルする。製品とコンソール試験は `ProjectReference` の `UseLibraryDependencyInputs` で、その構成のオブジェクト一式を各 EXE にリンクする。代表的な変更箇所は次のとおり。
 
 | 変更するもの | 実装を読む順序 |
 |---|---|
@@ -236,7 +236,7 @@ Float32 同幅は PCM32 と同じコピー・左右分離・バイト反転、PC
 
 ## 最適化の方針
 
-Release は上記の起動ガードを除き両プロジェクトで `/GL` と非増分 `/LTCG` を使用する。Debug と Debug-ASan は全体最適化を使わない。Release の `.obj` は中間表現なので、監査対象は最終 `wavplay.exe` の機械語。リンク時の `/FAcs` には `/OPT:REF` で除去される関数も含み得る。`/OPT:ICF` は明示しないが、別々の関数に別アドレスが割り当てられる保証もない。
+Release は上記の起動ガードを除く翻訳単位を `/GL` でコンパイルし、両 EXE をそれぞれ非増分 `/LTCG` でリンクする。Debug と Debug-ASan は全体最適化を使わない。Release の `.obj` は中間表現なので、監査対象は最終 `wavplay.exe` の機械語。リンク時の `/FAcs` には `/OPT:REF` で除去される関数も含み得る。`/OPT:ICF` は明示しないが、別々の関数に別アドレスが割り当てられる保証もない。
 
 `ui`・`settings`・`playlist` はサイズ優先の `/O1`、制御 STA を含むそれ以外の製品翻訳単位は速度優先の `/O2` とする。設定は [WavplaySources.props](../build/WavplaySources.props) でディレクトリごとに共有する。LTCG 時の共有インライン関数・テンプレートの生成元はリンカーが選ぶ。名前空間で到達先を調べる検査だけでは、展開後のコードの最適化水準までは判定できない。
 
@@ -261,7 +261,7 @@ Release は上記の起動ガードを除き両プロジェクトで `/GL` と�
 
 ### テストの構成
 
-[試験仕様](test-specification.md)が合否と実行手順の正本。`tests/wavplay_tests/` は製品ソースをそのままビルドし、`DriverSession` の生成関数 `asio::ActivateDriver` にプロジェクト所有の模擬 ASIO を渡す。グローバルなドライバー差し替え口は置かない。
+[試験仕様](test-specification.md)が合否と実行手順の正本。`tests/wavplay_tests/` は製品と同じ構成の共有オブジェクトを使い、`DriverSession` の生成関数 `asio::ActivateDriver` にプロジェクト所有の模擬 ASIO を渡す。グローバルなドライバー差し替え口は置かない。
 
 | 配置 | 判定する境界 |
 |---|---|
@@ -271,4 +271,4 @@ Release は上記の起動ガードを除き両プロジェクトで `/GL` と�
 | `suites/playback/`、`control/`・`ui/` の試験群 | 一区間の音声と停止、異レートの機器呼び出し順、入力形式と出力型の時系列、操作番号と実ウィンドウの接続をそれぞれ試す |
 | `diagnostics/` | `--probe-asio`、`--probe-asio-rate-lifecycle`、`--audition-asio*`、`--measure-prefetch`。先読み測定は音源形式と ASIO 出力名を選べる。実機や測定の入口では製品と同様にイメージ固定を一度試みる |
 
-`scripts/verify.ps1` がビルド・静的解析・試験を順に実行する。`scripts/verification/` では `build-settings.ps1` が評価済み MSBuild 設定、`release-image.ps1` が PE・manifest・version、`realtime-code.ps1` がコールバックから到達する機械語、`startup-code.ps1` が起動ガード前と拒否後の到達先を監査する。機械語の2つの監査は、逆アセンブルの読み方を `disassembly.ps1` で共有する。PE・取り込み DLL・機械語の自己検査は違反を入れた入力の拒否も確認する。詳細なケースと環境は[試験仕様](test-specification.md)を参照する。
+`scripts/verify.ps1` が構成ごとのビルド・静的解析・試験を実行する。`scripts/verification/` では `build-settings.ps1` が評価済み MSBuild 設定、`release-image.ps1` が PE・manifest・version、`realtime-code.ps1` がコールバックから到達する機械語、`startup-code.ps1` が起動ガード前と拒否後の到達先を監査する。機械語の2つの監査は、逆アセンブルの読み方を `disassembly.ps1` で共有する。PE・取り込み DLL・機械語の自己検査は違反を入れた入力の拒否も確認する。詳細なケースと環境は[試験仕様](test-specification.md)を参照する。

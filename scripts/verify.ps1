@@ -179,7 +179,11 @@ if ($Jobs) {
 }
 
 $clock.Start()
-Assert-BuildSettings $tools.MSBuild @($project, (Join-Path $root 'tests\wavplay_tests\wavplay_tests.vcxproj')) (Join-Path $root 'src')
+$projects = @($project, (Join-Path $root 'src\wavplay\wavplay_core.vcxproj'),
+    (Join-Path $root 'tests\wavplay_tests\wavplay_tests.vcxproj'))
+$auditProfiles = @('Debug', 'Release')
+if ($IncludeASan) { $auditProfiles += 'Debug-ASan' }
+Assert-BuildSettings $tools.MSBuild $projects (Join-Path $root 'src') $auditProfiles
 Complete-Stage 'Build settings'
 
 foreach ($buildProfile in $profiles) {
