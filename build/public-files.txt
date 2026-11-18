@@ -14,6 +14,8 @@ docs/architecture.md
 docs/asio-contract.md
 docs/dependencies.md
 docs/requirements.md
+docs/test-build.md
+docs/test-playback.md
 docs/test-specification.md
 LICENSE
 packaging/player/README.txt
