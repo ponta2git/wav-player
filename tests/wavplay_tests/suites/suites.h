@@ -15,7 +15,7 @@ int run_cpu_features_tests();
 // Internal child process entry point: the process-lifetime image lock
 // (core::lock_process_image), which a suite process never takes itself.
 int run_image_lock_child(std::span<wchar_t* const> operands);
-int run_system_sleep_tests();
+int run_thread_hints_tests();
 int run_message_wait_tests();
 int run_wav_header_tests();
 int run_wav_reader_tests();
@@ -73,7 +73,7 @@ struct Suite {
 inline constexpr std::array suites{
     Suite{L"cpu_features", run_cpu_features_tests},
     Suite{L"memory", run_memory_tests},
-    Suite{L"system_sleep", run_system_sleep_tests},
+    Suite{L"thread_hints", run_thread_hints_tests},
     Suite{L"message_wait", run_message_wait_tests},
     Suite{L"planar_conversion", run_planar_conversion_tests},
     Suite{L"sample_types", run_sample_types_tests},

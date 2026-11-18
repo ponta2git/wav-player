@@ -4,7 +4,6 @@
 #include "wavplay/asio/driver_queries.h"
 #include "wavplay/core/memory.h"
 #include "wavplay/core/message_wait.h"
-#include "wavplay/core/system_sleep.h"
 #include "wavplay/playback/output_format.h"
 #include "wavplay/playback/segment_renderer.h"
 #include "wavplay/stream/prefetch_ring.h"
@@ -170,9 +169,6 @@ private:
     // that every switch writes, and the timed waits run while writers are attached.
     const std::size_t width_;
     const long output_pair_;
-    // Created only when playback is about to start. Keep the request until
-    // buffers are disposed, including failure cleanup and the final drain.
-    std::optional<core::SystemSleepGuard> sleep_guard_;
 
     void create_buffers()
     {
@@ -258,7 +254,6 @@ private:
         if (!continue_playback()) {
             return;
         }
-        sleep_guard_.emplace();
         callback_routing::attach(*renderer_); // start may enter the first callback synchronously.
         const auto start_error = driver_.start();
         if (start_error == ASE_OK) {

@@ -679,9 +679,8 @@ void test_playback_resource_lifetime()
         }
         return count;
     };
-    // Each case must retire the system-sleep request as well as the stream's
-    // existing handles. Warm each path first so one-time CRT/COM initialization
-    // and the process-lifetime playback event are outside the measured interval.
+    // Warm each path first so one-time CRT/COM initialization and the
+    // process-lifetime playback event are outside the measured interval.
     for (const unsigned faults : {0U, 1U, 2U, 4U, 7U}) {
         const auto play = [&] {
             MockAsio driver;
@@ -1740,7 +1739,7 @@ int wavplay_test::run_segment_tests()
     suite.run_timed("ASIO callback negotiation and invalid indices", test_callback_contract);
     suite.run_timed("partial ASIO buffer allocation failure", test_buffer_allocation_failure);
     suite.run_timed("ASIO latency failure and retry", test_latency_failure);
-    suite.run_timed("playback releases power and stream handles on success and failures", test_playback_resource_lifetime);
+    suite.run_timed("playback releases stream handles on success and failures", test_playback_resource_lifetime);
     suite.run_timed("ASIO double-buffer drain timing", [] {
         // Pre-filled B starts sounding latency - width frames after switch A.
         test_track(5, 3, 6);

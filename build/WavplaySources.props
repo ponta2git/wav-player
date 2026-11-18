@@ -22,8 +22,6 @@
     <ClInclude Include="$(WavplaySourceDir)\core\memory.h" />
     <ClCompile Include="$(WavplaySourceDir)\core\message_wait.cpp" />
     <ClInclude Include="$(WavplaySourceDir)\core\message_wait.h" />
-    <ClCompile Include="$(WavplaySourceDir)\core\system_sleep.cpp" />
-    <ClInclude Include="$(WavplaySourceDir)\core\system_sleep.h" />
     <ClCompile Include="$(WavplaySourceDir)\core\thread_hints.cpp" />
     <ClInclude Include="$(WavplaySourceDir)\core\thread_hints.h" />
     <ClInclude Include="$(WavplaySourceDir)\core\win32.h" />

@@ -82,7 +82,7 @@
     <ClCompile Include="suites\core\memory_tests.cpp" />
     <ClCompile Include="suites\core\cpu_features_tests.cpp" />
     <ClCompile Include="suites\core\message_wait_tests.cpp" />
-    <ClCompile Include="suites\core\system_sleep_tests.cpp" />
+    <ClCompile Include="suites\core\thread_hints_tests.cpp" />
     <ClCompile Include="suites\diagnostics\diagnostics_tests.cpp" />
     <ClCompile Include="suites\media\wav_header_tests.cpp" />
     <ClCompile Include="suites\media\wav_reader_tests.cpp" />
