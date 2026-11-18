@@ -132,6 +132,8 @@ tests/wavplay_tests/diagnostics/lifecycle_probe.cpp
 tests/wavplay_tests/diagnostics/lifecycle_probe.h
 tests/wavplay_tests/diagnostics/prefetch_measurement.cpp
 tests/wavplay_tests/diagnostics/prefetch_measurement.h
+tests/wavplay_tests/diagnostics/product_startup.cpp
+tests/wavplay_tests/diagnostics/product_startup.h
 tests/wavplay_tests/doubles/dac_queue_asio.h
 tests/wavplay_tests/doubles/mock_asio.h
 tests/wavplay_tests/doubles/registered_driver.h

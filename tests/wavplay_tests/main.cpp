@@ -2,6 +2,7 @@
 #include "diagnostics/capability_probe.h"
 #include "diagnostics/lifecycle_probe.h"
 #include "diagnostics/prefetch_measurement.h"
+#include "diagnostics/product_startup.h"
 #include "framework/failure_reporting.h"
 #include "framework/supervisor.h"
 #include "suites/suites.h"
@@ -161,7 +162,7 @@ constexpr std::array commands{
 
 int usage()
 {
-    std::fputs("Usage: wavplay_tests.exe [--jobs N [--suite name ...] | --list | --in-process | --suite name [--suite name ...]", stderr);
+    std::fputs("Usage: wavplay_tests.exe [--jobs N [--suite name ...] | --list | --in-process | --suite name [--suite name ...] | --test-product-startup wavplay.exe", stderr);
     for (const auto& command : commands) {
         std::fprintf(stderr, " | %.*ls%s", static_cast<int>(command.flag.size()), command.flag.data(), command.synopsis);
     }
@@ -305,6 +306,9 @@ int wmain(int argc, wchar_t** argv)
     }
     if (mode == L"--default-timer-child") {
         return wavplay_test::run_default_timer_child(arguments.subspan(1));
+    }
+    if (mode == L"--test-product-startup") {
+        return arguments.size() == 2 ? wavplay_test::run_product_startup_test(arguments[1]) : usage();
     }
     if (mode == L"--jobs") {
         return arguments.size() >= 2 ? supervise_with_jobs(arguments) : usage();

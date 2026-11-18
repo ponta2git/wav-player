@@ -112,6 +112,8 @@
     <ClInclude Include="diagnostics\lifecycle_probe.h" />
     <ClCompile Include="diagnostics\prefetch_measurement.cpp" />
     <ClInclude Include="diagnostics\prefetch_measurement.h" />
+    <ClCompile Include="diagnostics\product_startup.cpp" />
+    <ClInclude Include="diagnostics\product_startup.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\wavplay\wavplay_core.vcxproj">
