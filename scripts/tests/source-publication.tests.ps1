@@ -254,10 +254,10 @@ try {
     Test-CleanSource
     Test-RejectedManifestEntries
     Test-ConfiguredDevice
-    Test-TrackedFiles
+    Invoke-WithoutGitEnvironment { Test-TrackedFiles }
     Test-Export
     Test-ExportedTreeState
-    Test-IgnoreRules
+    Invoke-WithoutGitEnvironment { Test-IgnoreRules }
     Test-CiFullVerification
     Test-CiReleaseOnly
     Write-Output ('[PASS] Source publication tests: ' + (Get-TestGroupCount) + ' groups')

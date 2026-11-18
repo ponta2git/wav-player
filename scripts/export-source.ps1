@@ -27,8 +27,8 @@ try {
         Copy-Item -LiteralPath (Join-Path $root $relative) -Destination $target
     }
     & $checkPublicSource -SourceDirectory $staging -StrictTree
-    # Directory.Move refuses an existing destination, including a concurrent creation.
-    [IO.Directory]::Move($staging, $destination)
+    # The move refuses an existing destination, including a concurrent creation.
+    Move-StagingDirectory $staging $destination
 } finally {
     Remove-StagingDirectory $staging $parent $stagingPrefix
 }

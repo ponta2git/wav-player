@@ -42,8 +42,8 @@ function Publish-PlayerFolder([Collections.IDictionary]$Files, [string]$Executab
         if ((Get-FileHash -LiteralPath (Join-Path $staging 'wavplay.exe') -Algorithm SHA256).Hash -cne $ExecutableHash) {
             throw 'The Release executable changed while preparing the transfer folder; build again into a new folder.'
         }
-        # Directory.Move refuses an existing destination, including a concurrent creation.
-        [IO.Directory]::Move($staging, $Output)
+        # The move refuses an existing destination, including a concurrent creation.
+        Move-StagingDirectory $staging $Output
     } finally {
         Remove-StagingDirectory $staging $parent $stagingPrefix
     }

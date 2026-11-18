@@ -1,6 +1,7 @@
 # Lists the WAV files below a folder into a UTF-8 playlist. build.ps1 copies this
 # file into the player folder, where setup.ps1 calls it, so it uses no other
-# script. A failure leaves the existing playlist and its folder unchanged.
+# script. The new list is written beside the playlist and put in place in one
+# step, so a failure leaves the existing playlist as it was.
 [CmdletBinding()]
 param(
     [string]$MusicDirectory,
@@ -31,9 +32,10 @@ function Save-Playlist {
     }
     $suffix = [Guid]::NewGuid().ToString('N')
     $temporary = Join-Path $parent ('.playlist-' + $suffix + '.tmp')
+    $replacing = [IO.File]::Exists($Destination)
     try {
         [IO.File]::WriteAllLines($temporary, $Paths, [Text.UTF8Encoding]::new($true, $true))
-        if ([IO.File]::Exists($Destination)) {
+        if ($replacing) {
             $stamp = [DateTime]::Now.ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
             $backup = $Destination + '.' + $stamp + '-' + $suffix + '.bak'
             [IO.File]::Replace($temporary, $Destination, $backup)
@@ -42,7 +44,11 @@ function Save-Playlist {
         [IO.File]::Move($temporary, $Destination)
     } finally {
         # Gone after a successful replace or move; left over only by a failure.
-        if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+        # It stays if a failed replacement took the playlist away, as the only
+        # copy of the new list. Failing to remove it must not hide that failure.
+        if ([IO.File]::Exists($temporary) -and (-not $replacing -or [IO.File]::Exists($Destination))) {
+            try { [IO.File]::Delete($temporary) } catch { Write-Warning ('A temporary file could not be removed: ' + $temporary) }
+        }
     }
 }
 

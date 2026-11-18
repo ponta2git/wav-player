@@ -77,11 +77,39 @@ function Invoke-TestProcess {
         $output = $process.StandardOutput.ReadToEndAsync()
         $errorText = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            $process.Kill()
+            Stop-TestProcessTree $process
             throw "A test process did not finish within $TimeoutSeconds s: $FileName $Arguments"
         }
         [PSCustomObject]@{ Code = $process.ExitCode; Output = $output.Result; Error = $errorText.Result }
     } finally { $process.Dispose() }
+}
+
+# Stops a process with the processes it started: a CMD entry point leaves its
+# PowerShell child running otherwise, with files of the test directory open.
+function Stop-TestProcessTree([Diagnostics.Process]$Process) {
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+    $start.Arguments = '/T /F /PID ' + $Process.Id
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $killer = [Diagnostics.Process]::Start($start)
+    try { [void]$killer.WaitForExit(10000) } finally { $killer.Dispose() }
+    [void]$Process.WaitForExit(5000)
+}
+
+# Runs Action without the variables through which a calling Git command, such as
+# a hook, points Git at its own repository: the Git commands of the tests must
+# act on their fixture repositories only.
+function Invoke-WithoutGitEnvironment([scriptblock]$Action) {
+    $names = @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_PREFIX')
+    $saved = @{}
+    foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+    try {
+        foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $null, 'Process') }
+        & $Action
+    } finally {
+        foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+    }
 }
 
 # Runs a CMD entry point as a double click would, with no console input: the

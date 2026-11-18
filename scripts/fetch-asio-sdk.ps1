@@ -60,8 +60,8 @@ try {
             throw ('The official archive is missing ' + $relative)
         }
     }
-    # Directory.Move refuses an existing destination, including a concurrent creation.
-    [IO.Directory]::Move($sdk, $destination)
+    # The move refuses an existing destination, including a concurrent creation.
+    Move-StagingDirectory $sdk $destination
     Write-Output 'SDK ready in external/asiosdk. It remains local and is not part of the source distribution.'
 } finally {
     Remove-StagingDirectory $staging $external $stagingPrefix

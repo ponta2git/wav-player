@@ -114,8 +114,8 @@ function Save-MusicPlaylist {
 }
 
 # Creates the settings file. CreateNew also protects a file created while the
-# prompts were open; a file that could not be written completely is removed
-# again, so that the next run starts clean.
+# prompts were open. A file whose content did not reach the file system is
+# removed again, so that the next run does not keep an incomplete one.
 function New-SettingsFile {
     param([string]$Path, [string]$Text)
     $bytes = [Text.UTF8Encoding]::new($false, $true).GetBytes($Text)
@@ -123,11 +123,18 @@ function New-SettingsFile {
     $written = $false
     try {
         $file.Write($bytes, 0, $bytes.Length)
-        $file.Flush($true)
+        $file.Flush()
         $written = $true
+        $file.Flush($true)
     } finally {
-        $file.Dispose()
-        if (-not $written) { [IO.File]::Delete($Path) }
+        # Closing a stream that failed to write fails again; remove the file all the same.
+        try {
+            $file.Dispose()
+        } finally {
+            if (-not $written) {
+                try { [IO.File]::Delete($Path) } catch { Write-Warning 'An incomplete settings.ini could not be removed; delete it before running setup again.' }
+            }
+        }
     }
 }
 
