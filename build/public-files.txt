@@ -35,6 +35,7 @@ scripts/support/staging.ps1
 scripts/support/visual-studio.ps1
 scripts/tests/player-setup.tests.ps1
 scripts/tests/source-publication.tests.ps1
+scripts/tests/test-support.ps1
 scripts/verification/build-settings.ps1
 scripts/verification/disassembly.ps1
 scripts/verification/realtime-code.ps1
