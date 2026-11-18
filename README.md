@@ -142,7 +142,7 @@ StartSilence=100
 | [アーキテクチャ](docs/architecture.md) | 層の責務と依存方向、スレッド、再生経路 |
 | [ASIO契約](docs/asio-contract.md) | SDKの規定とホスト側の方針 |
 | [試験仕様](docs/test-specification.md) | 自動検証と実機での確認手順 |
-| [開発手順](docs/development.md) | リポジトリの構成、検証、変更の流れ、コミット前の確認、版とタグ |
+| [開発手順](docs/development.md) | 記録の保存先、変更の流れ、コミット前の確認、版とタグ |
 | [依存とライセンス](docs/dependencies.md) | SDKの取得、公開範囲、第三者の条件 |
 
 PRとIssueを受け付けています。変更を加えるときは[開発手順](docs/development.md)を参照してください。

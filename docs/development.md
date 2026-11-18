@@ -1,45 +1,23 @@
 # WAV Player の開発手順
 
-この文書は変更の検証、PRの流れ、コミット前の確認、版とタグの手順を定める。ビルド環境と再生までの手順は [README](../README.md)、層の責務は[再生設計](architecture.md)、検証項目と合否の基準は[試験仕様](test-specification.md)を参照する。
+この文書は記録の保存先、変更の流れ、コミット前の確認、版とタグの手順を定める。ビルド環境と再生までの手順は [README](../README.md)、コードの配置は[再生設計](architecture.md#現在のコード配置)を参照する。
 
-## リポジトリの構成
+検証の方法は試験仕様を正本とする。全検証のコマンド、CIのジョブ構成、試験群の個別実行は[試験仕様](test-specification.md#ローカルとciの全検証)、変更した境界ごとの確認事項は[再生設計](architecture.md#品質特性と変更時の確認)を参照する。
 
-| パス | 内容 | Git |
-|---|---|---|
-| `src/app/` | 製品の入口（`wavplay.exe`） | 追跡 |
-| `src/wavplay/<層>/` | 層ごとの製品コード。製品と試験が同じオブジェクトをリンクする | 追跡 |
-| `tests/wavplay_tests/` | 自動試験と模擬ASIO（`wavplay_tests.exe`） | 追跡 |
-| `scripts/`、`build/` | ビルド・検証のスクリプト、共通のビルド設定、公開対象一覧 | 追跡 |
-| `packaging/player/` | 再生用フォルダーに入れるセットアップ一式 | 追跡 |
-| `docs/` | 現行の要件・設計・契約・試験手順・開発手順 | 追跡 |
-| `external/asiosdk/` | 取得したASIO SDK | 対象外 |
-| `out/` | ビルドの生成物と再生用フォルダー | 対象外 |
-| `private/` | 実験と実機の記録。`notes/`（実験メモ）、`experiments/`（途中の実験仕様）、`results/`（実機記録）、`publication/`（公開準備の監査記録） | 対象外 |
+## 記録の保存先
 
-Visual Studioでは [WAV Player.sln](../WAV%20Player.sln) を開き、Debug／Release x64をビルドする。
+`docs/` には現行の要件・設計・契約・試験手順・開発手順だけを置く。次の場所はGitの対象外とする。
+
+| パス | 内容 |
+|---|---|
+| `private/notes/` | 実験メモ |
+| `private/experiments/` | 途中の実験仕様 |
+| `private/results/` | 実機記録 |
+| `private/publication/` | 公開準備の監査記録 |
+| `out/` | ビルドの生成物と再生用フォルダー |
+| `external/asiosdk/` | 取得したASIO SDK |
 
 実験の実測値や作業の経緯は、コメントを含む公開ファイルに書かず `private/` に置く。公開する説明は、現行の契約・設計意図・検証手順に絞る。
-
-## 検証
-
-全検証はリポジトリ直下で次のコマンドを実行する。ドライバーの登録や機器の接続は不要。
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1 -Analyze -IncludeASan
-```
-
-| 段階 | 内容 |
-|---|---|
-| 構成の監査 | ソースの登録、層の依存、文書のリンク、評価済みのビルド設定 |
-| ビルド | Debug・Release（静的解析付き）、Debug-ASan |
-| 成果物の監査 | マニフェスト、版情報、ReleaseのPEと機械語 |
-| 試験 | ReleaseとDebug-ASanで、模擬ASIOを使う全試験群 |
-
-試験群を個別に実行するには、`out\x64\Release\wavplay_tests.exe --list` で名前を調べ、`--suite 群名` を指定する。
-
-GitHub ActionsはPRと `main` へのpushで全検証を実行し、結果を `Full verification` に示す。Release側では公開対象の監査、PowerShellスクリプトの回帰試験、製品EXEの起動確認も行う。手動実行の `release_only` は、静的解析とASanを省いてReleaseだけを調べる `Release diagnostics` で、失敗の調査に使う。
-
-CIの公開ログは合否と失敗箇所に絞るため、詳細は同じコマンドをローカルで実行して調べる。ランナーの分担と公開ログの範囲は[試験仕様](test-specification.md#ローカルとciの全検証)を参照する。
 
 ## 変更の流れ
 
@@ -47,6 +25,8 @@ CIの公開ログは合否と失敗箇所に絞るため、詳細は同じコマ
 |---|---|---|
 | 通常の変更（エージェントによる変更を含む） | 作業ブランチからPR | 最新の `main` に追従したPRで `Full verification` が成功し、所有者が差分を確認してマージする |
 | 所有者が軽微と判断した変更（文書の訂正など） | 所有者が `main` へ直接push | pushの後に実行される `Full verification` の結果を所有者が確認する |
+
+`Full verification` は、GitHub Actionsが実行する全検証のチェック名である。
 
 `main` の削除とforce pushは禁止で、直線履歴を保つ。この規則は所有者にも適用する。承認レビューは必須にしない。
 
@@ -63,14 +43,12 @@ git var GIT_AUTHOR_IDENT
 git var GIT_COMMITTER_IDENT
 ```
 
-`git status`、`git diff`、`git diff --cached` で変更と追加対象を確認し、次を実行する。
+`git status`、`git diff`、`git diff --cached` で変更と追加対象を確認し、次を実行する。2つのスクリプトの判定条件は[ソース登録とビルド設定](test-build.md#ソース登録とビルド設定)を参照する。
 
 ```powershell
 git diff --check
 git diff --cached --check
-# Gitが追跡するファイルと公開対象一覧の一致
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-public-source.ps1 -Tracked
-# Visual Studioへの登録、層の依存、文書のリンク
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-project-layout.ps1
 ```
 
@@ -99,4 +77,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-project-layo
 
 `v*` タグを作成できるのは所有者だけで、更新と削除は例外なく禁止する。公開済みのタグは移動・再利用せず、修正は新しい版として公開する。
 
-GitHub Releaseの作成は任意。作る場合も、変更説明とGitHubのソースアーカイブだけを使い、SDK・バイナリ・実機記録は添付しない。
+GitHub Releaseの作成は任意。作る場合は変更説明とGitHubのソースアーカイブだけを使う。[公開物の範囲](dependencies.md#ソース公開とローカルビルド)
