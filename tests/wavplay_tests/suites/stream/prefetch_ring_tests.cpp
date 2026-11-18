@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
@@ -395,6 +396,43 @@ void check_mono_join()
     }
 }
 
+constexpr std::array<std::size_t, 4> refill_widths{8, 47, 64, 544};
+constexpr std::uint8_t refill_guard = 0xa5;
+
+// Each width consumes the same two planes. Leave room for the zero tail of
+// its last block so that the comparison includes every submitted byte.
+template<class SampleAt>
+std::array<Bytes, 2> expected_refill_planes(std::size_t frame_count, std::size_t sample_bytes, SampleAt sample_at)
+{
+    std::array<Bytes, 2> planes;
+    for (std::size_t channel = 0; channel < planes.size(); ++channel) {
+        auto& plane = planes[channel];
+        plane.resize((frame_count + std::ranges::max(refill_widths) - 1) * sample_bytes);
+        for (std::size_t frame = 0; frame < frame_count; ++frame) {
+            const auto sample = sample_at(frame, channel);
+            std::memcpy(plane.data() + frame * sample_bytes, sample.data(), sample_bytes);
+        }
+    }
+    return planes;
+}
+
+void check_refill_block(const Bytes& guarded, const Bytes& plane, std::size_t start,
+    std::size_t sample_bytes, std::size_t channel)
+{
+    expect("refill leading guard", guarded.front(), refill_guard);
+    expect("refill trailing guard", guarded.back(), refill_guard);
+    const auto* actual = guarded.data() + 1;
+    const auto* expected = plane.data() + start * sample_bytes;
+    const auto bytes = guarded.size() - 2;
+    if (std::memcmp(actual, expected, bytes) != 0) {
+        const auto mismatch = std::mismatch(actual, actual + bytes, expected, expected + bytes);
+        const auto offset = static_cast<std::size_t>(mismatch.first - actual);
+        expect("refill frame " + std::to_string(start + offset / sample_bytes) +
+            " channel " + std::to_string(channel) + " byte " + std::to_string(offset % sample_bytes),
+            *mismatch.first, *mismatch.second);
+    }
+}
+
 void check_wide_pcm_refill(std::uint8_t source_bits, bool extensible_first = false, bool extensible_second = false,
     std::initializer_list<ASIOSampleType> output_types = {ASIOSTInt24LSB, ASIOSTInt32LSB},
     bool rf64_first = false, bool rf64_second = false)
@@ -403,7 +441,6 @@ void check_wide_pcm_refill(std::uint8_t source_bits, bool extensible_first = fal
     const std::size_t source_start = source_bits == 16 ? 0x7ff0 : source_bits == 24 ? 0x7ffff0 : 0x7ffffff0;
     const std::size_t source_bytes = source_bits / 8;
     const std::size_t first_storage_bytes = extensible_first ? 4 : source_bytes;
-    constexpr std::uint8_t guard = 0xa5;
     const auto data = [&](std::uint8_t channels, std::size_t count, std::size_t first, bool extensible) {
         if (extensible) { return pcm24_in32_ramp(channels, count, first); }
         return source_bits == 16 ? pcm16_ramp(channels, count, first) :
@@ -422,13 +459,19 @@ void check_wide_pcm_refill(std::uint8_t source_bits, bool extensible_first = fal
             if (oracle.valid_bits < source_bits) { continue; }
             const auto output = asio::to_sample_format(type).value();
             expect("oracle container bytes", output.bytes(), oracle.bytes);
+            const auto sample_bytes = oracle.bytes;
+            const auto expected = expected_refill_planes(frames, sample_bytes, [&](std::size_t frame, std::size_t channel) {
+                const auto left = source_start + frame;
+                const auto bits = channel == 0 || (channels == 1 && frame < first_frames) ? left : ~left;
+                const auto canonical = le32(static_cast<std::uint32_t>(bits));
+                return expected_integer_sample(canonical.data(), source_bits, oracle);
+            });
             // Eight frames place small left/right payloads in one cache line.
             // 64 is dense for all integer widths; 47 always has gaps. At 544,
             // packed output has a gap while 16/32-bit output remains dense.
-            for (const std::size_t width : {8, 64, 47, 544}) {
+            for (const auto width : refill_widths) {
                 auto ring = make_ring(path, next, width, output);
                 expect("wide PCM ring pages locked", static_cast<int>(ring.pages_locked()), 1);
-                const auto sample_bytes = output.bytes();
                 const auto layout = stream::plan_ring_layout(stream::plan_block_shape(width, sample_bytes),
                     frames, 44100);
                 expect("wide PCM seam follows the initially filled ring",
@@ -436,7 +479,7 @@ void check_wide_pcm_refill(std::uint8_t source_bits, bool extensible_first = fal
                 expect("wide PCM seam splits a slot", static_cast<int>(first_frames % width != 0), 1);
                 expect("wide PCM source frame width", ring.info().format.frame_bytes(), channels * first_storage_bytes);
                 expect("wide PCM output block bytes", ring.block_bytes(), width * sample_bytes);
-                Bytes left(ring.block_bytes() + 2, guard), right(left.size(), guard);
+                Bytes left(ring.block_bytes() + 2, refill_guard), right(left.size(), refill_guard);
                 // The run exceeds the two-second ring. Its mono/stereo seam
                 // comes after the wrap, inside a slot and an 8 KiB source batch.
                 for (std::size_t start = 0; start < frames; start += width) {
@@ -445,28 +488,8 @@ void check_wide_pcm_refill(std::uint8_t source_bits, bool extensible_first = fal
                     expect("wide PCM refill status", static_cast<int>(result.status), static_cast<int>(
                         start + count == frames ? stream::BlockStatus::last : stream::BlockStatus::ready));
                     expect("wide PCM refill valid frames", result.valid_frames, count);
-                    for (std::size_t i = 0; i < width; ++i) {
-                        const auto frame = start + i;
-                        const auto left_bits = source_start + frame;
-                        const auto right_bits = channels == 1 && frame < first_frames ? left_bits : ~left_bits;
-                        for (const auto channel : {0, 1}) {
-                            std::array<std::uint8_t, 4> canonical{};
-                            const auto bits = channel == 0 ? left_bits : right_bits;
-                            for (std::size_t byte = 0; byte < source_bytes; ++byte) {
-                                canonical[byte] = static_cast<std::uint8_t>(bits >> (8 * byte));
-                            }
-                            const auto expected = i < count ? expected_integer_sample(canonical.data(), source_bits, oracle) :
-                                std::array<std::uint8_t, 4>{};
-                            const auto& actual = channel == 0 ? left : right;
-                            for (std::size_t byte = 0; byte < sample_bytes; ++byte) {
-                                expect("wide PCM refill byte", actual[1 + i * sample_bytes + byte], expected[byte]);
-                            }
-                        }
-                    }
-                    for (const auto* channel : {&left, &right}) {
-                        expect("wide PCM refill leading guard", channel->front(), guard);
-                        expect("wide PCM refill trailing guard", channel->back(), guard);
-                    }
+                    check_refill_block(left, expected[0], start, sample_bytes, 0);
+                    check_refill_block(right, expected[1], start, sample_bytes, 1);
                 }
                 ring.stop();
                 expect("wide PCM completed producer has no read failure", static_cast<int>(ring.read_failed()), 0);
@@ -484,7 +507,6 @@ void check_float_ring(const FloatOutputCase& target, FloatRingJoin join,
 {
     constexpr std::size_t first_frames = 2 * block + 2 * 544 + 17;
     constexpr std::size_t total_frames = first_frames + 2 * 544 + 3;
-    constexpr std::uint8_t guard = 0xa5;
     const bool first_float = join != FloatRingJoin::pcm16_to_float;
     const bool second_float = join != FloatRingJoin::float_to_pcm32;
     const auto first_bits = static_cast<std::uint8_t>(first_float ? 32 : 16);
@@ -503,7 +525,16 @@ void check_float_ring(const FloatOutputCase& target, FloatRingJoin join,
         const auto second_chunks = {second_format, second_data};
         const auto* path = first.write(rf64_first ? rf64(first_chunks, first_frames) : wave(first_chunks));
         const auto* next = second.write(rf64_second ? rf64(second_chunks, total_frames - first_frames) : wave(second_chunks));
-        for (const std::size_t width : {8, 47, 64, 544}) {
+        const auto expected = expected_refill_planes(total_frames, target.bytes, [&](std::size_t frame, std::size_t channel) {
+            const bool in_first = frame < first_frames;
+            const auto source_frame = in_first ? frame : frame - first_frames;
+            const auto source_channels = in_first ? channels : std::uint8_t{2};
+            const auto source_bits = in_first ? first_bits : std::uint8_t{32};
+            const auto& data = in_first ? first_data.payload : second_data.payload;
+            const auto offset = (source_frame * source_channels + (source_channels == 1 ? 0 : channel)) * (source_bits / 8);
+            return expected_float_sample(data.data() + offset, source_bits, target, in_first ? first_float : second_float);
+        });
+        for (const auto width : refill_widths) {
             auto ring = make_ring(path, next, width, output);
             const auto layout = stream::plan_ring_layout(stream::plan_block_shape(width, target.bytes),
                 total_frames, 44100);
@@ -512,40 +543,15 @@ void check_float_ring(const FloatOutputCase& target, FloatRingJoin join,
             expect("float ring source frame width", ring.info().format.frame_bytes(), channels * (first_bits / 8));
             expect("float ring output bytes", ring.block_bytes(), width * target.bytes);
             expect("float ring pages locked", static_cast<int>(ring.pages_locked()), 1);
-            Bytes left(ring.block_bytes() + 2, guard), right(left.size(), guard);
+            Bytes left(ring.block_bytes() + 2, refill_guard), right(left.size(), refill_guard);
             for (std::size_t start = 0; start < total_frames; start += width) {
                 const auto popped = await_block(ring, left.data() + 1, right.data() + 1);
                 const auto count = std::min(width, total_frames - start);
                 expect("float ring status", static_cast<int>(popped.status), static_cast<int>(
                     start + count == total_frames ? stream::BlockStatus::last : stream::BlockStatus::ready));
                 expect("float ring valid frames include signed zeros", popped.valid_frames, count);
-                for (std::size_t i = 0; i < width; ++i) {
-                    const auto frame = start + i;
-                    const bool in_first = frame < first_frames;
-                    const auto source_channels = in_first ? channels : std::uint8_t{2};
-                    const auto source_bits = in_first ? first_bits : std::uint8_t{32};
-                    const auto& data = in_first ? first_data.payload : second_data.payload;
-                    for (std::size_t channel = 0; channel < 2; ++channel) {
-                        std::array<std::uint8_t, 8> expected{};
-                        if (i < count) {
-                            const auto source_frame = in_first ? frame : frame - first_frames;
-                            const auto offset = (source_frame * source_channels + (source_channels == 1 ? 0 : channel)) * (source_bits / 8);
-                            expected = expected_float_sample(data.data() + offset, source_bits, target,
-                                in_first ? first_float : second_float);
-                        }
-                        const auto& actual = channel == 0 ? left : right;
-                        for (std::size_t byte = 0; byte < target.bytes; ++byte) {
-                            if (actual[1 + i * target.bytes + byte] != expected[byte]) {
-                                expect("float ring frame " + std::to_string(frame) + " channel " + std::to_string(channel) +
-                                    " byte " + std::to_string(byte), actual[1 + i * target.bytes + byte], expected[byte]);
-                            }
-                        }
-                    }
-                }
-                for (const auto* data : {&left, &right}) {
-                    expect("float ring leading guard", data->front(), guard);
-                    expect("float ring trailing guard", data->back(), guard);
-                }
+                check_refill_block(left, expected[0], start, target.bytes, 0);
+                check_refill_block(right, expected[1], start, target.bytes, 1);
             }
             ring.stop();
             expect("float ring producer completed without read failure", static_cast<int>(ring.read_failed()), 0);

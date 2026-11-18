@@ -221,7 +221,7 @@ int supervise(std::span<const Suite* const> selected, unsigned jobs)
 {
     std::vector<wavplay_test::SupervisedSuite> supervised;
     for (const auto* suite : selected) {
-        supervised.push_back({suite->name, suite->long_running});
+        supervised.push_back({suite->name, suite->priority});
     }
     return wavplay_test::supervise_suites(supervised, jobs);
 }

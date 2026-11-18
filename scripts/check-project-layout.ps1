@@ -193,7 +193,7 @@ function Assert-SuiteTable {
     $duplicateSuites = @($suiteFiles | Group-Object | Where-Object Count -gt 1)
     if ($duplicateSuites) { throw "Suite name used by more than one file: $($duplicateSuites.Name -join ', ')" }
     $suiteTable = Get-Content -LiteralPath (Join-Path $suiteDirectory 'suites.h') -Raw
-    $suiteEntries = @([regex]::Matches($suiteTable, 'Suite\s*\{\s*L"([^"]*)"\s*,\s*run_(\w+)_tests\s*(?:,\s*(?:true|false)\s*)?\}') |
+    $suiteEntries = @([regex]::Matches($suiteTable, 'Suite\s*\{\s*L"([^"]*)"\s*,\s*run_(\w+)_tests\s*(?:,\s*SuitePriority::\w+\s*)?\}') |
         ForEach-Object {
             if ($_.Groups[1].Value -cne $_.Groups[2].Value) { throw "Suite entry name does not match its runner: $($_.Value)" }
             $_.Groups[1].Value

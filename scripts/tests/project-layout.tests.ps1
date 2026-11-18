@@ -150,12 +150,12 @@ function Test-ProductTextFormatting {
 
 function Test-SuiteTable {
     $table = 'tests/wavplay_tests/suites/suites.h'
-    $entry = '^([ \t]*)Suite\{L"(\w+)", run_\w+_tests\},[ \t]*\r?\n'
+    $entry = '^([ \t]*)Suite\{L"\w+", run_\w+_tests(?:, SuitePriority::\w+)?\},[ \t]*\r?\n'
     Edit-TreeText $table $entry ''
     Assert-Rejected 'Suite file needs exactly one suites.h entry'
-    Edit-TreeText $table $entry ('$0$1Suite{L"ghost", run_ghost_tests},' + "`n")
+    Edit-TreeText $table $entry ('$0$1Suite{L"ghost", run_ghost_tests, SuitePriority::early},' + "`n")
     Assert-Rejected 'Suite table entry without a suite file'
-    Edit-TreeText $table $entry ('$0$1Suite{L"ghost", run_other_tests},' + "`n")
+    Edit-TreeText $table $entry ('$0$1Suite{L"ghost", run_other_tests, SuitePriority::first},' + "`n")
     Assert-Rejected 'Suite entry name does not match its runner'
     $coreSuite = Get-FirstFile 'tests/wavplay_tests/suites/core' '*.cpp'
     Add-TreeLine $coreSuite '#include "fixtures/playback_fixture.h"'
