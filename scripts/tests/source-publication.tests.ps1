@@ -144,24 +144,44 @@ function Test-IgnoreRules {
     Complete-TestGroup 'checked-in ignore rules exclude agent state in a fresh repository'
 }
 
-# The real CI orchestrator with small child scripts in place of its steps. The
-# stand-in for verify.ps1 records its arguments and prints lines that must and
-# must not reach the public log; with fail.flag beside it, it exits with 17.
+# The stand-ins record each step the real CI orchestrator actually starts.
+# verify.ps1 also prints public and private diagnostics and can fail with 17.
+$ciStepsBeforeSetup = @('check-public-source.ps1', 'source-publication.tests.ps1', 'project-layout.tests.ps1',
+    'fetch-asio-sdk.ps1', 'verify.ps1')
+
 function New-CiFixture([string]$Name) {
     $ci = Join-Path $work $Name
     foreach ($relative in 'scripts/tests', 'logs') { [void][IO.Directory]::CreateDirectory((Join-Path $ci $relative)) }
     Copy-Item -LiteralPath (Join-Path $root 'scripts/ci.ps1') -Destination (Join-Path $ci 'scripts/ci.ps1')
     foreach ($name in 'check-public-source.ps1', 'fetch-asio-sdk.ps1', 'tests/source-publication.tests.ps1',
-        'tests/project-layout.tests.ps1') {
-        Write-TestFile (Join-Path $ci ('scripts/' + $name)) 'param([switch]$Tracked)'
+        'tests/project-layout.tests.ps1', 'tests/player-setup.tests.ps1') {
+        Write-TestFile (Join-Path $ci ('scripts/' + $name)) @'
+param([switch]$Tracked)
+$name = $MyInvocation.MyCommand.Name
+if ($name -eq 'check-public-source.ps1' -and -not $Tracked) { throw 'Missing -Tracked.' }
+[IO.File]::AppendAllText($env:WAVPLAY_CI_TEST_STEPS, $name + [Environment]::NewLine)
+'@
     }
-    Write-TestFile (Join-Path $ci 'scripts/tests/player-setup.tests.ps1') '[IO.File]::WriteAllText((Join-Path $PSScriptRoot ''setup-ran.txt''), ''ran'')'
     Write-TestFile (Join-Path $ci 'scripts/verify.ps1') @'
-param([string]$Configuration = 'All', [switch]$Analyze, [switch]$IncludeASan)
-@{ Configuration=$Configuration; Analyze=[bool]$Analyze; IncludeASan=[bool]$IncludeASan } |
-    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'arguments.json')
+param([string]$Configuration = 'All', [switch]$Analyze, [switch]$IncludeASan, [switch]$CiWorker, [switch]$TestReleaseStartup)
+[IO.File]::AppendAllText($env:WAVPLAY_CI_TEST_STEPS, $MyInvocation.MyCommand.Name + [Environment]::NewLine)
+@{
+    Configuration=$Configuration; Analyze=[bool]$Analyze; IncludeASan=[bool]$IncludeASan
+    CiWorker=[bool]$CiWorker; TestReleaseStartup=[bool]$TestReleaseStartup
+} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'arguments.json')
 Write-Output '== Build Release|x64 =='
 Write-Output '== player_window =='
+Write-Output 'TIMING Settings 0 ms'
+Write-Output 'TIMING Build-Debug 123 ms'
+Write-Output 'TIMING Audit-Release 456 ms'
+Write-Output 'TIMING Test-Debug-ASan 789 ms'
+Write-Output 'TIMING Release-Startup 10 ms'
+Write-Output 'TIMING PRIVATE_CI_STAGE 12 ms'
+Write-Output 'TIMING Audit-Unknown 12 ms'
+Write-Output 'TIMING Audit-Release 12 ms PRIVATE_CI_TOKEN'
+Write-Output 'TIMING Build-Debug -1 ms'
+Write-Output 'TIMING Test-Debug-ASan 1.5 ms'
+Write-Output 'TIMING Settings 9223372036854775808 ms'
 Write-Output '[FAIL] fixture numeric assertion: example field: expected 1, got 0 (fixture_tests.cpp:42)'
 Write-Output '[FAIL] fixture exception: C:\Users\PRIVATE_CI_FIXTURE\secret.log token=PRIVATE_CI_TOKEN'
 Write-Output '[FAIL] fixture GUI timeout: class std::runtime_error: GUI state transition: deadline expired; C:\Users\PRIVATE_CI_GUI\input.wav token=PRIVATE_CI_TOKEN (player_window_tests.cpp:1150)'
@@ -186,15 +206,21 @@ if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'fail.flag')) { exit 17 }
     $ci
 }
 
-function Invoke-CiFixture([string]$Directory, [switch]$ReleaseOnly) {
+function Invoke-CiFixture([string]$Directory, [switch]$ReleaseOnly, [string]$Worker) {
     $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + (Join-Path $Directory 'scripts/ci.ps1') + '"'
     if ($ReleaseOnly) { $arguments += ' -ReleaseOnly' }
-    $environment = @{ RUNNER_TEMP = Join-Path $Directory 'logs' }
+    if ($Worker) { $arguments += ' -Worker ' + $Worker }
+    $environment = @{ RUNNER_TEMP = Join-Path $Directory 'logs'; WAVPLAY_CI_TEST_STEPS = Join-Path $Directory 'steps.txt' }
     Invoke-TestProcess -FileName (Get-WindowsPowerShell) -Arguments $arguments -Environment $environment -TimeoutSeconds 90
 }
 
 function Get-ForwardedArguments([string]$Directory) {
     Get-Content -LiteralPath (Join-Path $Directory 'scripts/arguments.json') -Raw | ConvertFrom-Json
+}
+
+function Assert-CiSteps([string]$Directory, [string[]]$Expected) {
+    $actual = [IO.File]::ReadAllLines((Join-Path $Directory 'steps.txt'))
+    Assert-True (($actual -join ', ') -ceq ($Expected -join ', ')) ('CI ran unexpected steps: ' + ($actual -join ', '))
 }
 
 function Assert-NoPrivateDiagnostic($Result, [string]$Directory, [string]$Description) {
@@ -208,11 +234,17 @@ function Test-CiFullVerification {
     Assert-True ($result.Code -eq 0) 'Default CI fixture failed.'
     $arguments = Get-ForwardedArguments $ci
     Assert-True ($arguments.Configuration -eq 'All' -and $arguments.Analyze -and $arguments.IncludeASan) 'Default CI omitted full verification arguments.'
+    Assert-True (-not $arguments.CiWorker -and $arguments.TestReleaseStartup) 'Default CI omitted the complete source audit or startup test.'
     Assert-True ($result.Output.Contains('Verification mode: full')) 'Full mode was not labelled.'
     $publicLines = @($result.Output -split '\r?\n')
     foreach ($expected in @(
         '== Build Release|x64 ==',
         '== player_window ==',
+        'TIMING Settings 0 ms',
+        'TIMING Build-Debug 123 ms',
+        'TIMING Audit-Release 456 ms',
+        'TIMING Test-Debug-ASan 789 ms',
+        'TIMING Release-Startup 10 ms',
         '[FAIL] fixture numeric assertion: expected 1, got 0 (fixture_tests.cpp:42)',
         '[FAIL] fixture exception',
         '[FAIL] fixture GUI timeout: exception=std::runtime_error (player_window_tests.cpp:1150)',
@@ -232,8 +264,9 @@ function Test-CiFullVerification {
     )) {
         Assert-True ($publicLines -ccontains $expected) ('CI diagnostic differs from its bounded schema: ' + $expected)
     }
+    Assert-True (@($publicLines -clike 'TIMING *').Count -eq 5) 'A timing outside the stage and integer duration schema reached the public log.'
     Assert-NoPrivateDiagnostic $result $ci 'Successful CI'
-    Assert-True (Test-Path -LiteralPath (Join-Path $ci 'scripts/tests/setup-ran.txt')) 'Successful CI did not continue to setup tests.'
+    Assert-CiSteps $ci ($ciStepsBeforeSetup + 'player-setup.tests.ps1')
     Complete-TestGroup 'default CI forwards full verification and publishes only reconstructed diagnostics'
 }
 
@@ -243,11 +276,31 @@ function Test-CiReleaseOnly {
     $result = Invoke-CiFixture $ci -ReleaseOnly
     $arguments = Get-ForwardedArguments $ci
     Assert-True ($arguments.Configuration -eq 'Release' -and -not $arguments.Analyze -and -not $arguments.IncludeASan) 'Release-only mode forwarded the wrong verification arguments.'
+    Assert-True (-not $arguments.CiWorker -and $arguments.TestReleaseStartup) 'Release-only diagnostics omitted the complete source audit or startup test.'
     Assert-True ($result.Output.Contains('Verification mode: Release-only diagnostics')) 'Diagnostic mode was not labelled.'
     Assert-True ($result.Code -ne 0 -and $result.Error.Contains('failed (exit 17)')) 'CI swallowed the child failure exit code.'
     Assert-NoPrivateDiagnostic $result $ci 'Failed CI'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $ci 'scripts/tests/setup-ran.txt'))) 'CI continued after the verification failure.'
+    Assert-CiSteps $ci $ciStepsBeforeSetup
     Complete-TestGroup 'Release-only CI forwards its mode, fails on a nonzero child and removes detailed logs'
+}
+
+function Test-CiWorkers {
+    foreach ($worker in 'Release', 'Debug') {
+        $ci = New-CiFixture ('CI worker ' + $worker)
+        $result = Invoke-CiFixture $ci -Worker $worker
+        Assert-True ($result.Code -eq 0) "$worker CI worker failed."
+        $arguments = Get-ForwardedArguments $ci
+        Assert-True ($arguments.Configuration -ceq $worker -and $arguments.CiWorker -and $arguments.Analyze) "$worker CI worker selected the wrong configuration or analysis."
+        if ($worker -eq 'Release') {
+            Assert-True ($arguments.TestReleaseStartup -and -not $arguments.IncludeASan) 'Release worker forwarded the wrong startup or ASan options.'
+            Assert-CiSteps $ci ($ciStepsBeforeSetup + 'player-setup.tests.ps1')
+        } else {
+            Assert-True ($arguments.IncludeASan -and -not $arguments.TestReleaseStartup) 'Debug worker forwarded the wrong startup or ASan options.'
+            Assert-CiSteps $ci @('fetch-asio-sdk.ps1', 'verify.ps1')
+        }
+        Assert-NoPrivateDiagnostic $result $ci "$worker CI worker"
+    }
+    Complete-TestGroup 'CI workers each check the SDK and their own build profiles; public source and setup run once'
 }
 
 try {
@@ -260,6 +313,7 @@ try {
     Invoke-WithoutGitEnvironment { Test-IgnoreRules }
     Test-CiFullVerification
     Test-CiReleaseOnly
+    Test-CiWorkers
     Write-Output ('[PASS] Source publication tests: ' + (Get-TestGroupCount) + ' groups')
 } finally {
     Remove-StagingDirectory $work $workParent $workPrefix

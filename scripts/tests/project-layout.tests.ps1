@@ -101,9 +101,15 @@ function Test-SourceRegistration {
     Assert-Rejected 'Source/Visual Studio registration mismatch'
     Edit-TreeText 'build/WavplaySources.props' '^([ \t]*<ClInclude Include="[^"]+" />\r?\n)' '$1$1'
     Assert-Rejected 'Duplicate source registrations'
-    Edit-TreeText 'tests/wavplay_tests/wavplay_tests.vcxproj' '^.*WavplaySources\.props.*\r?\n' ''
-    Assert-Rejected 'must import the shared product sources exactly once'
-    Complete-TestGroup 'unregistered and doubly registered sources and a missing shared import are rejected'
+    Edit-TreeText 'src/wavplay/wavplay_core.vcxproj' '^.*WavplaySources\.props.*\r?\n' ''
+    Assert-Rejected 'one import of WavplaySources.props'
+    Edit-TreeText 'tests/wavplay_tests/wavplay_tests.vcxproj' '(<ProjectReference Include=")[^"]+' '$1missing.vcxproj'
+    Assert-Rejected 'must link the shared library object inputs'
+    Edit-TreeText 'src/app/wavplay.vcxproj' '(<UseLibraryDependencyInputs>)true' '$1false'
+    Assert-Rejected 'must link the shared library object inputs'
+    Edit-TreeText 'src/app/wavplay.vcxproj' '^</Project>' '<Import Project="$(RepoRoot)build\WavplaySources.props" /></Project>'
+    Assert-Rejected 'compiles the shared library sources again'
+    Complete-TestGroup 'unregistered or duplicate sources, missing library inputs and duplicate compilation are rejected'
 }
 
 function Test-LayerDependencies {
@@ -150,12 +156,12 @@ function Test-ProductTextFormatting {
 
 function Test-SuiteTable {
     $table = 'tests/wavplay_tests/suites/suites.h'
-    $entry = '^([ \t]*)Suite\{L"(\w+)", run_\w+_tests\},[ \t]*\r?\n'
+    $entry = '^([ \t]*)Suite\{L"\w+", run_\w+_tests(?:, SuitePriority::\w+)?\},[ \t]*\r?\n'
     Edit-TreeText $table $entry ''
     Assert-Rejected 'Suite file needs exactly one suites.h entry'
-    Edit-TreeText $table $entry ('$0$1Suite{L"ghost", run_ghost_tests},' + "`n")
+    Edit-TreeText $table $entry ('$0$1Suite{L"ghost", run_ghost_tests, SuitePriority::early},' + "`n")
     Assert-Rejected 'Suite table entry without a suite file'
-    Edit-TreeText $table $entry ('$0$1Suite{L"ghost", run_other_tests},' + "`n")
+    Edit-TreeText $table $entry ('$0$1Suite{L"ghost", run_other_tests, SuitePriority::first},' + "`n")
     Assert-Rejected 'Suite entry name does not match its runner'
     $coreSuite = Get-FirstFile 'tests/wavplay_tests/suites/core' '*.cpp'
     Add-TreeLine $coreSuite '#include "fixtures/playback_fixture.h"'

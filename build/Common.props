@@ -7,11 +7,12 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(EnableASAN)' == 'true'">
     <SupportJustMyCode>false</SupportJustMyCode>
-    <CopyAsanBinariesToOutDir>true</CopyAsanBinariesToOutDir>
+    <CopyAsanBinariesToOutDir Condition="'$(ConfigurationType)' == 'Application'">true</CopyAsanBinariesToOutDir>
   </PropertyGroup>
 
   <ItemDefinitionGroup>
     <ClCompile>
+      <AdditionalIncludeDirectories>$(RepoRoot)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
       <!-- stdcpp23 emits /std:c++23preview, so the compiler enforces the C++23 ceiling
            (_HAS_CXX26=0); move to /std:c++23 once the toolset accepts it. -->
@@ -32,7 +33,7 @@
            shares the 24H2 API set (NTDDI_WIN11_GE). The symbolic values expand after sdkddkver.h.
            Review WindowsTargetPlatformVersion above and this pin in the same change: an SDK update
            keeps these values; only raising the minimum OS in docs/requirements.md raises them.
-           UNICODE and _UNICODE come from CharacterSet=Unicode in both projects. -->
+           UNICODE and _UNICODE come from CharacterSet=Unicode in all projects. -->
       <PreprocessorDefinitions>_WIN32_WINNT=_WIN32_WINNT_WIN10;WINVER=_WIN32_WINNT_WIN10;NTDDI_VERSION=NTDDI_WIN11_GE;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <!-- Release defines NDEBUG, the standard convention, so a plain assert checks only in Debug.
            The MSVC STL checks follow _ITERATOR_DEBUG_LEVEL, not NDEBUG. scripts/verify.ps1 rejects

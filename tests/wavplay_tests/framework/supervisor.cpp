@@ -313,7 +313,9 @@ int supervise_suites(std::span<const SupervisedSuite> suites, unsigned jobs)
         outcomes[i].suite = suites[i].name;
         order[i] = i;
     }
-    std::ranges::stable_partition(order, [&](std::size_t i) { return suites[i].long_running; });
+    std::ranges::stable_sort(order, [&](std::size_t a, std::size_t b) {
+        return suites[a].priority > suites[b].priority;
+    });
     std::printf("Running %zu suites, up to %u at a time.\n", suites.size(), jobs);
     std::fflush(stdout);
 

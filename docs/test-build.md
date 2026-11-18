@@ -4,14 +4,14 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 
 ## ソース登録とビルド設定
 
-`scripts/check-project-layout.ps1` は登録・依存・文書を調べる。評価済みのコンパイル設定は `scripts/verification/build-settings.ps1` が両プロジェクトで調べる。
+`scripts/check-project-layout.ps1` は登録・依存・文書を調べる。`scripts/verification/build-settings.ps1` は共有ライブラリ・製品・試験の各プロジェクトで、指定した構成のコンパイル設定を評価する。
 
 `scripts/tests/project-layout.tests.ps1` は公開対象の複製へ「構成の整合」「製品の文字列の整形」「文書の見出しへのリンク」の違反を1つずつ加え、`check-project-layout.ps1` がその理由で拒否すること、コメントだけの言及と外部リンクを合格にすることをCIで確かめる。
 
 **構成の整合**
 
-- 入力・操作　共有・専用ソース登録、直接の層間include、`playback`・`control` の公開ヘッダー、SDK境界、`ui`・`main.cpp`・`playback_controller.h` の推移的なSDK非依存、下位層の試験群の直接の依存、試験ファイルと `suites.h` の表、Solution Items。
-- 合格条件　`check-project-layout.ps1` が登録漏れ・重複・存在しない項目・禁止依存・他層の内部ヘッダー・SDKへの推移的到達・下位層試験から再生エンジンやGUIへの直接の依存・表にない試験ファイル・試験ファイルのない表項目を拒否する。
+- 入力・操作　共有ライブラリのソース登録、両EXEからのプロジェクト参照と専用ソース登録、直接の層間include、`playback`・`control` の公開ヘッダー、SDK境界、`ui`・`main.cpp`・`playback_controller.h` の推移的なSDK非依存、下位層の試験群の直接の依存、試験ファイルと `suites.h` の表、Solution Items。
+- 合格条件　`check-project-layout.ps1` が共有一覧の読み込み漏れ・EXEへの二重読み込み・共有オブジェクトへの参照漏れ、ソースの登録漏れ・重複・存在しない項目・禁止依存・他層の内部ヘッダー・SDKへの推移的到達・下位層試験から再生エンジンやGUIへの直接の依存・表にない試験ファイル・試験ファイルのない表項目を拒否する。
 
 **製品の文字列の整形**
 
@@ -28,8 +28,8 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 
 **ビルドの設定**
 
-- 入力・操作　両プロジェクトのRelease・Debugを `MSBuild /getItem:ClCompile` で評価し、`planar_conversion` 群をコンパイルする。否定確認は木の複製の `build/Common.props`・`build/WavplaySources.props`・試験プロジェクトを1か所ずつ変えて行う。
-- 各翻訳単位　`LanguageStandard=stdcpp23`。追加オプションは `/utf-8 /Zc:__cplusplus /arch:AVX2 /Zc:throwingNew /Zc:preprocessor /Brepro` の順に各1つ。起動ガードの `src/app/startup.cpp` と `src/wavplay/core/cpu_features.cpp` では同位置が `/arch:SSE4.2`。clは最後の競合指定を採るため、MSBuildが項目の設定の後に渡す `AdditionalOptions` の追加・重複（`/arch:AVX512`・`/Od`・`/GL-`・`-std:c++latest`・`/Zc:preprocessor-` 等）を拒否する。
+- 入力・操作　全検証では3つのプロジェクトのDebug・Release・Debug-ASanを `MSBuild /getItem:ClCompile` で評価し、`planar_conversion` 群をコンパイルする。否定確認は木の複製の `build/Common.props`・`build/WavplaySources.props`・試験プロジェクトを1か所ずつ変えて行う。
+- 各翻訳単位　`LanguageStandard=stdcpp23`。CRTはReleaseで `/MT`、Debug・Debug-ASanで `/MTd`。`EnableASAN` はDebug-ASanの全翻訳単位で有効にする。追加オプションは `/utf-8 /Zc:__cplusplus /arch:AVX2 /Zc:throwingNew /Zc:preprocessor /Brepro` の順に各1つ。起動ガードの `src/app/startup.cpp` と `src/wavplay/core/cpu_features.cpp` では同位置が `/arch:SSE4.2`。clは最後の競合指定を採るため、MSBuildが項目の設定の後に渡す `AdditionalOptions` の追加・重複（`/arch:AVX512`・`/Od`・`/GL-`・`-std:c++latest`・`/Zc:preprocessor-` 等）を拒否する。
 - 最適化　全体最適化はReleaseだけにあり、起動ガードの2翻訳単位は全構成で除外する。Releaseの製品コードは `src/wavplay/ui`・`settings`・`playlist` 配下（下位ディレクトリを含む）が `MinSpace`、それ以外は `MaxSpeed`。違反は翻訳単位と値を示す。
 - コンパイル時　`_MSVC_LANG==202302L`・`_HAS_CXX26==0`・`__cplusplus==_MSVC_LANG`・`_MSVC_TRADITIONAL==0`・`NTDDI_VERSION==NTDDI_WIN11_GE`、`_WIN32_WINNT` と `WINVER` が `_WIN32_WINNT_WIN10`、`TCHAR` が `wchar_t` と同じ大きさであることを確かめる。SDK 10.0.26100では既定値が同じため、`NTDDI_VERSION` の固定を外してもこの検査では検出しない。
 
@@ -132,7 +132,7 @@ CRTの表明・stdio・ブロック関数は前節の挿入例を拒否する。
 
 **同一条件からのRelease再ビルド**
 
-両プロジェクトは `/Brepro`（cl・link）と `/PDBALTPATH:%_PDB%` でビルドし、時刻とPDBのGUIDを内容のハッシュに、デバッグディレクトリのPDBをファイル名だけにする。`/Brepro` は文書化されていないため、再現性は再ビルドで確認する。
+両EXEは `/Brepro`（cl・link）と `/PDBALTPATH:%_PDB%` でビルドし、時刻とPDBのGUIDを内容のハッシュに、デバッグディレクトリのPDBをファイル名だけにする。`/Brepro` は文書化されていないため、再現性は再ビルドで確認する。
 
 1. 同じコミット・ツールセット・SDK・ソース配置から、既存出力のない2つの一時ディレクトリへ `MSBuild src\app\wavplay.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:BaseOutputPath=<一時ディレクトリ>\` を実行し、`wavplay.exe` のSHA-256を比べる。
 2. `dumpbin /headers` のデバッグディレクトリは `cv` に `wavplay.pdb` だけを示し、`repro` の項目を持つ（`verify.ps1` の監査対象）。

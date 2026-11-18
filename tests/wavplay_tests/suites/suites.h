@@ -1,5 +1,7 @@
 #pragma once
 
+#include "framework/supervisor.h"
+
 #include <array>
 #include <span>
 #include <string_view>
@@ -55,9 +57,7 @@ int run_diagnostics_tests();
 struct Suite {
     std::wstring_view name; // The suite's file name without "_tests.cpp", for --suite.
     int (*run)();
-    // Dominated by real-time playback (seconds or more); the supervisor starts
-    // these first so that a parallel run is not left waiting on one of them.
-    bool long_running{};
+    SuitePriority priority{};
 };
 
 // The default run order. Lower layers run first only so that a failure is
@@ -82,20 +82,20 @@ inline constexpr std::array suites{
     Suite{L"device_config", run_device_config_tests},
     Suite{L"playlist", run_playlist_tests},
     Suite{L"ring_layout", run_ring_layout_tests},
-    Suite{L"prefetch_ring", run_prefetch_ring_tests, true},
+    Suite{L"prefetch_ring", run_prefetch_ring_tests, SuitePriority::first},
     Suite{L"driver_session", run_driver_session_tests},
     Suite{L"output_format", run_output_format_tests},
     Suite{L"playback_signal", run_playback_signal_tests},
-    Suite{L"segment", run_segment_tests, true},
-    Suite{L"track_player", run_track_player_tests, true},
-    Suite{L"track_source_formats", run_track_source_formats_tests, true},
-    Suite{L"track_output_types", run_track_output_types_tests, true},
+    Suite{L"segment", run_segment_tests, SuitePriority::early},
+    Suite{L"track_player", run_track_player_tests, SuitePriority::early},
+    Suite{L"track_source_formats", run_track_source_formats_tests, SuitePriority::early},
+    Suite{L"track_output_types", run_track_output_types_tests, SuitePriority::early},
     Suite{L"rate_transition", run_rate_transition_tests},
     Suite{L"session_playback", run_session_playback_tests},
-    Suite{L"playback_controller", run_playback_controller_tests, true},
+    Suite{L"playback_controller", run_playback_controller_tests, SuitePriority::first},
     Suite{L"player_window", run_player_window_tests},
     Suite{L"single_instance", run_single_instance_tests},
-    Suite{L"diagnostics", run_diagnostics_tests, true},
+    Suite{L"diagnostics", run_diagnostics_tests, SuitePriority::early},
 };
 
 } // namespace wavplay_test

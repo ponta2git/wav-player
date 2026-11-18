@@ -7,9 +7,12 @@
 
 namespace wavplay_test {
 
+// Launch the longest suites first while keeping registration order for reports.
+enum class SuitePriority { normal, early, first };
+
 struct SupervisedSuite {
     std::wstring_view name;
-    bool long_running{}; // Started before the others, so the parallel run ends sooner.
+    SuitePriority priority{};
 };
 
 // Runs each suite as "<this executable> --suite <name>" in a process of its

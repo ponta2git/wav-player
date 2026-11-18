@@ -1,13 +1,7 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
-    <WavplaySourceRoot>$(RepoRoot)src</WavplaySourceRoot>
-    <WavplaySourceDir>$(WavplaySourceRoot)\wavplay</WavplaySourceDir>
+    <WavplaySourceDir>$(RepoRoot)src\wavplay</WavplaySourceDir>
   </PropertyGroup>
-  <ItemDefinitionGroup>
-    <ClCompile>
-      <AdditionalIncludeDirectories>$(WavplaySourceRoot);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-    </ClCompile>
-  </ItemDefinitionGroup>
   <!-- core: platform utilities shared by every layer -->
   <ItemGroup>
     <ClInclude Include="$(WavplaySourceDir)\core\alignment.h" />
@@ -117,8 +111,7 @@
   </ItemGroup>
   <!-- Optimization level is a per-directory policy (docs/architecture.md): the GUI, startup settings
        and playlist code is optimized for size (/O1); every other layer, the control STA that owns
-       the driver and main.cpp keep /O2. Update, after the Include groups above, sets it for both
-       projects alike; scripts/check-project-layout.ps1 reads only Include items. -->
+       the driver and main.cpp keep /O2. Apply the overrides after including the sources above. -->
   <ItemGroup Condition="'$(Configuration)' == 'Release'">
     <ClCompile Update="$(WavplaySourceDir)\ui\*.cpp;$(WavplaySourceDir)\settings\*.cpp;$(WavplaySourceDir)\playlist\*.cpp">
       <Optimization>MinSpace</Optimization>

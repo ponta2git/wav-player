@@ -1166,7 +1166,11 @@ void test_playlist_display_and_continuous_playback()
     GuiDriver driver;
     Gui gui(driver, {}, SW_HIDE, 0ms, {}, false,
         playlist_file(playlist, {first_path, second_path, first_path, last_path}, true));
-    gui.settled(L"Stopped");
+    // Play starts disabled and is enabled after the first list and its
+    // horizontal extent have been rendered. Wait for that transition before
+    // the first synchronous status read on the UI thread.
+    gui.wait_until([&] { return gui.enabled(ui::control_id::play_pause); }, "initial playlist display");
+    gui.state(L"Stopped");
     const auto list = GetDlgItem(gui.window, ui::control_id::playlist);
     expect("GUI shows every valid playlist item", Gui::send(list, LB_GETCOUNT), 4);
     expect("playlist starts without selecting a track", gui.selected_track(), LB_ERR);
