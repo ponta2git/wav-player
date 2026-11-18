@@ -80,7 +80,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1 -Analyz
 - [試験仕様](docs/test-specification.md)：自動検証と実機の確認手順
 - [依存とライセンス](docs/dependencies.md)：SDKの取得、公開範囲、第三者条件
 
-開発は作業ブランチで進め、`main` への変更はPRを経由します。最新の `main` に追従した状態で、必須チェック `Full verification`（静的解析・Release・ASanを含む全検証）が成功してから、リポジトリ所有者が差分を確認してマージします。個人開発のため承認レビュー数は必須にしていません。手動の `Release diagnostics` は必須の全検証とは別の診断です。
+通常の開発は作業ブランチとPRで進めます。最新の `main` に追従したPRで `Full verification`（静的解析・Release・ASanを含む全検証）が成功してから、所有者が差分を確認してマージします。承認レビュー数は0です。手動の `Release diagnostics` は失敗を調べるための診断です。
+
+文書の訂正など軽微な変更は、所有者本人の判断で `main` に直接pushできます。その場合は変更が先に反映され、続いて `Full verification` が実行されるため、所有者が結果を確認します。この例外はアカウント単位で、軽微かどうかは所有者が判断します。エージェントによる変更はPRを経由します。`main` の削除禁止・force push禁止・直線履歴の要件は所有者にも適用されます。
 
 外部からのPRとIssuesは受け付けていますが、採用・対応・対応期限は約束していません。
 
