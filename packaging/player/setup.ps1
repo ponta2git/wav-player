@@ -1,4 +1,8 @@
 # Local first-run configuration only. Does not download, build, install a driver or start playback.
+# Runs from the flat player folder that build.ps1 assembles, beside wavplay.exe
+# and the two helper scripts, and uses nothing else. Every input is validated
+# before the first file is written, and an existing settings.ini or playlist.txt
+# is replaced only on explicit request.
 [CmdletBinding()]
 param(
     [string]$DeviceClsid,
@@ -9,43 +13,50 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$executable = Join-Path $PSScriptRoot 'wavplay.exe'
-if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
-    throw 'wavplay.exe is missing. Run build.cmd on the build PC and copy the complete player folder to this PC.'
-}
-foreach ($name in @('check-asio-drivers.ps1', 'make-playlist.ps1')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $name) -PathType Leaf)) {
-        throw ('The player folder is incomplete: ' + $name + ' is missing. Copy the complete folder again.')
+
+# Fails unless the folder holds the player and both helper scripts.
+function Assert-PlayerFolder {
+    param([string]$Executable, [string[]]$Helpers)
+    if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
+        throw 'wavplay.exe is missing. Run build.cmd on the build PC and copy the complete player folder to this PC.'
     }
-}
-$sessionId = (Get-Process -Id $PID).SessionId
-if (@(Get-Process -Name wavplay -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId }).Count) {
-    throw 'Close WAV Player before running setup. Existing settings have not been changed.'
-}
-$settingsPath = Join-Path $PSScriptRoot 'settings.ini'
-$playlistPath = Join-Path $PSScriptRoot 'playlist.txt'
-$hasSettings = Test-Path -LiteralPath $settingsPath
-$hasPlaylist = Test-Path -LiteralPath $playlistPath
-foreach ($path in @($settingsPath, $playlistPath)) {
-    if ((Test-Path -LiteralPath $path) -and -not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw ('A directory occupies a configuration filename: ' + [IO.Path]::GetFileName($path))
+    foreach ($helper in $Helpers) {
+        if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+            throw ('The player folder is incomplete: ' + [IO.Path]::GetFileName($helper) + ' is missing. Copy the complete folder again.')
+        }
     }
-}
-if ($hasSettings -and -not [string]::IsNullOrWhiteSpace($DeviceClsid)) {
-    throw 'settings.ini already exists. It has been preserved; edit it while WAV Player is closed to change the device.'
-}
-if ($hasPlaylist -and -not $UpdatePlaylist -and -not [string]::IsNullOrWhiteSpace($MusicDirectory)) {
-    throw 'playlist.txt already exists. Use -UpdatePlaylist to replace it with a backup, or omit -MusicDirectory to keep it.'
 }
 
-$ini = $null
-if (-not $hasSettings) {
-    $inventory = (& (Join-Path $PSScriptRoot 'check-asio-drivers.ps1') -Json | Out-String) | ConvertFrom-Json
+# The configuration is not changed while the player runs in this session.
+function Assert-PlayerClosed {
+    $sessionId = (Get-Process -Id $PID).SessionId
+    if (@(Get-Process -Name wavplay -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId }).Count) {
+        throw 'Close WAV Player before running setup. Existing settings have not been changed.'
+    }
+}
+
+# Returns whether a configuration file exists; a directory of that name is refused.
+function Test-ConfigurationFile {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw ('A directory occupies a configuration filename: ' + [IO.Path]::GetFileName($Path))
+    }
+    $true
+}
+
+# Returns the Clsid and Name of the usable x64 driver that RequestedClsid names
+# or, without one, that the user picks from the numbered list.
+function Select-AsioDriver {
+    param([string]$InventoryScript, [string]$RequestedClsid)
+    $inventory = (& $InventoryScript -Json | Out-String) | ConvertFrom-Json
     $drivers = @($inventory.Drivers | Where-Object { $_.LoadableByX64App })
     if (-not $drivers.Count) {
         throw 'No usable x64 ASIO driver registration was found. Install your device manufacturer''s x64 driver, then run setup again.'
     }
-    if ([string]::IsNullOrWhiteSpace($DeviceClsid)) {
+    if ([string]::IsNullOrWhiteSpace($RequestedClsid)) {
         for ($index = 0; $index -lt $drivers.Count; $index++) {
             Write-Host ('{0}. {1}' -f ($index + 1), $drivers[$index].Description)
         }
@@ -54,42 +65,102 @@ if (-not $hasSettings) {
         if (-not [int]::TryParse($answer, [ref]$number) -or $number -lt 1 -or $number -gt $drivers.Count) {
             throw 'Choose one of the displayed driver numbers.'
         }
-        $DeviceClsid = [string]$drivers[$number - 1].CLSID
+        $RequestedClsid = [string]$drivers[$number - 1].CLSID
     }
     $parsed = [Guid]::Empty
-    if (-not [Guid]::TryParse($DeviceClsid, [ref]$parsed) -or $parsed -eq [Guid]::Empty) { throw 'The ASIO device CLSID is invalid.' }
+    if (-not [Guid]::TryParse($RequestedClsid, [ref]$parsed) -or $parsed -eq [Guid]::Empty) { throw 'The ASIO device CLSID is invalid.' }
     $selected = @($drivers | Where-Object { $_.CLSID -ieq $parsed.ToString('B') })
     if ($selected.Count -ne 1) { throw 'The selected CLSID is not a usable registered x64 ASIO driver.' }
-    $guid = $parsed.ToString('B').ToUpperInvariant()
-    $name = ([string]$selected[0].Description).Replace("`r", ' ').Replace("`n", ' ').Replace([char]0, ' ')
-    $ini = "[General]`r`nSelectedDevice=$guid`r`n`r`n[Device.$guid]`r`nName=$name`r`nOutputPair=1`r`nBufferSize=0`r`nStartSilence=100`r`n"
+    [PSCustomObject]@{ Clsid = $parsed.ToString('B').ToUpperInvariant(); Name = [string]$selected[0].Description }
 }
 
-if (-not $hasPlaylist -or $UpdatePlaylist) {
-    if ([string]::IsNullOrWhiteSpace($MusicDirectory)) { $MusicDirectory = Read-Host 'Local WAV folder (including subfolders)' }
-    $musicPath = $MusicDirectory.Trim().Trim('"')
+# The initial settings.ini for one device. Its name stays on one line of the file.
+function Get-SettingsText {
+    param([string]$Clsid, [string]$Name)
+    $line = $Name.Replace("`r", ' ').Replace("`n", ' ').Replace([char]0, ' ')
+    "[General]`r`nSelectedDevice=$Clsid`r`n`r`n[Device.$Clsid]`r`nName=$line`r`nOutputPair=1`r`nBufferSize=0`r`nStartSilence=100`r`n"
+}
+
+# Returns the WAV folder that Requested names or, without one, that the user
+# enters, after checking that it is an absolute path on a local drive.
+function Resolve-LocalMusicFolder {
+    param([string]$Requested)
+    if ([string]::IsNullOrWhiteSpace($Requested)) { $Requested = Read-Host 'Local WAV folder (including subfolders)' }
+    $musicPath = $Requested.Trim().Trim('"')
     if ($musicPath -notmatch '^[A-Za-z]:[\\/]') { throw 'Choose an absolute local WAV folder, for example C:\Music.' }
     $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($musicPath))
     if ($drive.DriveType -notin @([IO.DriveType]::Fixed, [IO.DriveType]::Removable, [IO.DriveType]::CDRom, [IO.DriveType]::Ram)) {
         throw 'The WAV folder must be on a local drive.'
     }
-    if ($hasPlaylist) {
-        & (Join-Path $PSScriptRoot 'make-playlist.ps1') -MusicDirectory $musicPath -OutputPath $playlistPath
-    } else {
-        $preparedPlaylist = Join-Path $PSScriptRoot ('.setup-playlist-' + [Guid]::NewGuid().ToString('N') + '.tmp')
-        try {
-            & (Join-Path $PSScriptRoot 'make-playlist.ps1') -MusicDirectory $musicPath -OutputPath $preparedPlaylist
-            [IO.File]::Move($preparedPlaylist, $playlistPath)
-        } finally {
-            if (Test-Path -LiteralPath $preparedPlaylist -PathType Leaf) { Remove-Item -LiteralPath $preparedPlaylist }
-        }
+    $musicPath
+}
+
+# Writes the playlist of MusicPath with the helper script. Replacing an existing
+# playlist keeps a backup; a first playlist never replaces a file that appeared
+# while the prompts were open.
+function Save-MusicPlaylist {
+    param([string]$PlaylistScript, [string]$MusicPath, [string]$PlaylistPath, [bool]$ReplaceExisting)
+    if ($ReplaceExisting) {
+        & $PlaylistScript -MusicDirectory $MusicPath -OutputPath $PlaylistPath
+        return
     }
+    $prepared = Join-Path ([IO.Path]::GetDirectoryName($PlaylistPath)) ('.setup-playlist-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        & $PlaylistScript -MusicDirectory $MusicPath -OutputPath $prepared
+        [IO.File]::Move($prepared, $PlaylistPath)
+    } finally {
+        if (Test-Path -LiteralPath $prepared -PathType Leaf) { Remove-Item -LiteralPath $prepared }
+    }
+}
+
+# Creates the settings file. CreateNew also protects a file created while the
+# prompts were open; a file that could not be written completely is removed
+# again, so that the next run starts clean.
+function New-SettingsFile {
+    param([string]$Path, [string]$Text)
+    $bytes = [Text.UTF8Encoding]::new($false, $true).GetBytes($Text)
+    $file = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    $written = $false
+    try {
+        $file.Write($bytes, 0, $bytes.Length)
+        $file.Flush($true)
+        $written = $true
+    } finally {
+        $file.Dispose()
+        if (-not $written) { [IO.File]::Delete($Path) }
+    }
+}
+
+$executable = Join-Path $PSScriptRoot 'wavplay.exe'
+$inventoryScript = Join-Path $PSScriptRoot 'check-asio-drivers.ps1'
+$playlistScript = Join-Path $PSScriptRoot 'make-playlist.ps1'
+$settingsPath = Join-Path $PSScriptRoot 'settings.ini'
+$playlistPath = Join-Path $PSScriptRoot 'playlist.txt'
+
+Assert-PlayerFolder $executable @($inventoryScript, $playlistScript)
+Assert-PlayerClosed
+$hasSettings = Test-ConfigurationFile $settingsPath
+$hasPlaylist = Test-ConfigurationFile $playlistPath
+if ($hasSettings -and -not [string]::IsNullOrWhiteSpace($DeviceClsid)) {
+    throw 'settings.ini already exists. It has been preserved; edit it while WAV Player is closed to change the device.'
+}
+if ($hasPlaylist -and -not $UpdatePlaylist -and -not [string]::IsNullOrWhiteSpace($MusicDirectory)) {
+    throw 'playlist.txt already exists. Use -UpdatePlaylist to replace it with a backup, or omit -MusicDirectory to keep it.'
+}
+
+# Choose and validate the device first; settings.ini is written last, after the
+# playlist, so that rejected music leaves no configuration behind.
+$settingsText = $null
+if (-not $hasSettings) {
+    $driver = Select-AsioDriver $inventoryScript $DeviceClsid
+    $settingsText = Get-SettingsText $driver.Clsid $driver.Name
+}
+if (-not $hasPlaylist -or $UpdatePlaylist) {
+    $musicPath = Resolve-LocalMusicFolder $MusicDirectory
+    Save-MusicPlaylist $playlistScript $musicPath $playlistPath $hasPlaylist
 } else { Write-Output 'Keeping the existing playlist.txt.' }
 if (-not $hasSettings) {
-    # CreateNew also protects a file created while the prompts were open.
-    $bytes = [Text.UTF8Encoding]::new($false, $true).GetBytes($ini)
-    $file = [IO.File]::Open($settingsPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-    try { $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) } finally { $file.Dispose() }
+    New-SettingsFile $settingsPath $settingsText
 } else { Write-Output 'Keeping the existing settings.ini.' }
 Write-Output 'Setup complete. Check Device and the track list; press Play when ready.'
 if (-not $NoLaunch) {
