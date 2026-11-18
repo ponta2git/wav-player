@@ -24,7 +24,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1 -Analyz
 2. Debug・Release x64を静的解析付きで再ビルドし、Debug-ASanもビルドする。生成物は構成ごとの基準で監査する。
 3. ReleaseとDebug-ASanで試験群を実行する。Debugの実行時検査はDebug-ASanに含まれる。ソリューションのビルドやSDKヘッダーの検査だけでは再生機能の合否は決まらない。
 
-ソース公開時のGitHub Actionsは `scripts/ci.ps1` から `check-public-source.ps1 -Tracked`、ソース公開のPowerShell回帰試験、SDKの取得・検査、上記の全検証、再生フォルダー設定のPowerShell回帰試験を実行する。
+ソース公開時のGitHub Actionsは `scripts/ci.ps1` から `check-public-source.ps1 -Tracked`、ソース公開と構成検査のPowerShell回帰試験、SDKの取得・検査、上記の全検証、再生フォルダー設定のPowerShell回帰試験を実行する。
 
 手動で `release_only` を選ぶと、`verify.ps1 -Configuration Release` でRelease限定の診断を行う。実行名とログにモードを示し、静的解析とDebug-ASanは「未実施」とする。全検証の合格には全構成での実行が必要。
 

@@ -34,6 +34,7 @@ scripts/support/public-manifest.ps1
 scripts/support/staging.ps1
 scripts/support/visual-studio.ps1
 scripts/tests/player-setup.tests.ps1
+scripts/tests/project-layout.tests.ps1
 scripts/tests/source-publication.tests.ps1
 scripts/tests/test-support.ps1
 scripts/verification/build-settings.ps1

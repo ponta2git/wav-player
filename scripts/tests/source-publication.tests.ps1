@@ -151,7 +151,8 @@ function New-CiFixture([string]$Name) {
     $ci = Join-Path $work $Name
     foreach ($relative in 'scripts/tests', 'logs') { [void][IO.Directory]::CreateDirectory((Join-Path $ci $relative)) }
     Copy-Item -LiteralPath (Join-Path $root 'scripts/ci.ps1') -Destination (Join-Path $ci 'scripts/ci.ps1')
-    foreach ($name in 'check-public-source.ps1', 'fetch-asio-sdk.ps1', 'tests/source-publication.tests.ps1') {
+    foreach ($name in 'check-public-source.ps1', 'fetch-asio-sdk.ps1', 'tests/source-publication.tests.ps1',
+        'tests/project-layout.tests.ps1') {
         Write-TestFile (Join-Path $ci ('scripts/' + $name)) 'param([switch]$Tracked)'
     }
     Write-TestFile (Join-Path $ci 'scripts/tests/player-setup.tests.ps1') '[IO.File]::WriteAllText((Join-Path $PSScriptRoot ''setup-ran.txt''), ''ran'')'

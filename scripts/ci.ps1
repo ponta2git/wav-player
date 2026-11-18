@@ -101,6 +101,7 @@ if ($ReleaseOnly) {
 $steps = @(
     @{ Name = 'Public source files'; File = 'check-public-source.ps1'; Arguments = @('-Tracked') },
     @{ Name = 'Source publication tests'; File = 'tests/source-publication.tests.ps1'; Arguments = @() },
+    @{ Name = 'Project layout tests'; File = 'tests/project-layout.tests.ps1'; Arguments = @() },
     @{ Name = 'SDK download and integrity'; File = 'fetch-asio-sdk.ps1'; Arguments = @() },
     $verification,
     @{ Name = 'Player setup tests'; File = 'tests/player-setup.tests.ps1'; Arguments = @() }
