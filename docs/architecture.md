@@ -231,7 +231,7 @@ Float32 同幅は PCM32 と同じコピー・左右分離・バイト反転、PC
 
 - **起動ガード**を置く `src/app/startup.cpp` と `core/cpu_features.cpp` だけは SSE4.2・LTCG 対象外とし、通常の CRT 起動を保つ。製品側の CRT 初期化、TLS callback、登録された終了処理を含め、判定前と非対応での終了時はベースラインの命令だけに限る。Windows とプリビルド CRT 内の機能判定は信頼境界とする。
 - **言語と Windows API の範囲**は共通ビルド設定で固定する。`LanguageStandard=stdcpp23`（`/std:c++23preview`、`_HAS_CXX26=0`）で C++23 に限定する。`_WIN32_WINNT` と `WINVER` は `_WIN32_WINNT_WIN10`、`NTDDI_VERSION` は `NTDDI_WIN11_GE`（25H2 と共通の 24H2 API 集合）。ターゲット SDK の更新時も最低 OS に合わせて API の可視範囲を見直す。`NDEBUG` は Release だけで定義する。[共通ビルド設定](../build/Common.props)
-- **実時間コードの ISA** は起動時に決定する。変換ループとコールバックに再 dispatch を設けず、浮動小数点演算・AVX512 は使用しない。ドライバーの double クロック値も `asio/clock.h` のビット比較で検査し、signaling NaN による例外や MXCSR の変更を避ける。
+- **実時間コードの ISA** は起動時に決定する。変換ループとコールバックに再 dispatch を設けず、浮動小数点演算・AVX512 は使用しない。版の間で意図せず命令幅が変わることを防ぐため、製品の ASIO コールバック経路と、変換カーネルを含む補充の定常経路では 256 bit 命令を使わない。Release の機械語監査で YMM オペランド、`vzeroupper`、`vzeroall` を拒否する。ドライバーの double クロック値も `asio/clock.h` のビット比較で検査し、signaling NaN による例外や MXCSR の変更を避ける。
 - **プロセス全体に効く** CET シャドースタックと CFG を有効にすると、同じプロセス内のドライバーのスレッドにも call/ret や間接呼び出しの検査が及ぶ。ドライバーの実行環境を変えない方針から `/CETCOMPAT:NO` とし、CFG と Spectre 緩和も有効にしない。代償として信頼できない WAV の処理でこれらの悪用緩和は働かない。ヘッダーと範囲を入力側で検証し、Release で PE の GUARD_CF（0x4000）と CET compatible の不在を監査する。判断を変えるときはビルド設定・監査・設計を併せて更新する。
 
 ## 最適化の方針
@@ -271,4 +271,4 @@ Release は上記の起動ガードを除く翻訳単位を `/GL` でコンパ�
 | `suites/playback/`、`control/`・`ui/` の試験群 | 一区間の音声と停止、異レートの機器呼び出し順、入力形式と出力型の時系列、操作番号と実ウィンドウの接続をそれぞれ試す |
 | `diagnostics/` | `--probe-asio`、`--probe-asio-rate-lifecycle`、`--audition-asio*`、`--measure-prefetch`。先読み測定は音源形式と ASIO 出力名を選べる。実機や測定の入口では製品と同様にイメージ固定を一度試みる |
 
-`scripts/verify.ps1` が構成ごとのビルド・静的解析・試験を実行する。`scripts/verification/` では `build-settings.ps1` が評価済み MSBuild 設定、`release-image.ps1` が PE・manifest・version、`realtime-code.ps1` がコールバックから到達する機械語、`startup-code.ps1` が起動ガード前と拒否後の到達先を監査する。機械語の2つの監査は、逆アセンブルの読み方を `disassembly.ps1` で共有する。PE・取り込み DLL・機械語の自己検査は違反を入れた入力の拒否も確認する。詳細なケースと環境は[試験仕様](test-specification.md)を参照する。
+`scripts/verify.ps1` が構成ごとのビルド・静的解析・試験を実行する。`scripts/verification/` では `build-settings.ps1` が評価済み MSBuild 設定、`release-image.ps1` が PE・manifest・version、`realtime-code.ps1` がコールバックと補充の定常経路の機械語、`startup-code.ps1` が起動ガード前と拒否後の到達先を監査する。機械語の監査は、逆アセンブルの読み方を `disassembly.ps1` で共有する。PE・取り込み DLL・機械語の自己検査は違反を入れた入力の拒否も確認する。詳細なケースと環境は[試験仕様](test-specification.md)を参照する。
