@@ -1,10 +1,12 @@
 #include "diagnostics/prefetch_measurement.h"
 #include "wavplay/asio/sample_types.h"
 #include "wavplay/audio/planar_conversion.h"
+#include "wavplay/core/win32.h"
 #include "wavplay/stream/prefetch_ring.h"
 #include "fixtures/ring_fixture.h"
 #include "fixtures/wav_builder.h"
 
+#include <intrin.h>
 #include <windows.h>
 
 #include <algorithm>
@@ -12,8 +14,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <stdexcept>
-#include <system_error>
+#include <vector>
 
 namespace {
 
@@ -84,25 +87,54 @@ wavplay_test::Bytes measurement_wave(const MeasurementInput& input, std::uint32_
         bits == 24 ? pcm24_ramp(2, frames) : pcm32_ramp(2, frames)});
 }
 
-std::uint64_t process_reads()
+IO_COUNTERS process_io()
 {
     IO_COUNTERS counters{};
     if (!GetProcessIoCounters(GetCurrentProcess(), &counters)) {
-        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "GetProcessIoCounters");
+        wavplay::core::throw_last_error("GetProcessIoCounters");
     }
-    return counters.ReadOperationCount;
+    return counters;
 }
 
-std::uint64_t process_cpu_100ns()
+double timestamp_cycles_per_us()
 {
-    FILETIME created{}, exited{}, kernel{}, user{};
-    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
-        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "GetProcessTimes");
+    LARGE_INTEGER frequency{}, start{}, end{};
+    if (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&start)) {
+        wavplay::core::throw_last_error("QueryPerformanceCounter calibration");
     }
-    const auto ticks = [](const FILETIME& value) {
-        return (static_cast<std::uint64_t>(value.dwHighDateTime) << 32) | value.dwLowDateTime;
-    };
-    return ticks(kernel) + ticks(user);
+    const auto first = __rdtsc();
+    Sleep(100);
+    const auto last = __rdtsc();
+    if (!QueryPerformanceCounter(&end)) { wavplay::core::throw_last_error("QueryPerformanceCounter"); }
+    if (end.QuadPart <= start.QuadPart || last <= first) { throw std::runtime_error("Invalid calibration interval"); }
+    const double us = static_cast<double>(end.QuadPart - start.QuadPart) * 1e6 /
+        static_cast<double>(frequency.QuadPart);
+    return static_cast<double>(last - first) / us;
+}
+
+struct Counters {
+    std::uint64_t reads, bytes, cycles;
+};
+
+Counters sample(HANDLE producer)
+{
+    const auto io = process_io();
+    ULONG64 cycles{};
+    if (!QueryThreadCycleTime(producer, &cycles)) { wavplay::core::throw_last_error("QueryThreadCycleTime"); }
+    return {io.ReadOperationCount, io.ReadTransferCount, cycles};
+}
+
+struct Range {
+    double median;
+    std::uint64_t min, max;
+};
+
+Range summarize(std::vector<Counters>& wakes, std::uint64_t Counters::*field)
+{
+    std::ranges::sort(wakes, {}, field);
+    const auto n = wakes.size();
+    return {(static_cast<double>(wakes[(n - 1) / 2].*field) + static_cast<double>(wakes[n / 2].*field)) / 2,
+        wakes.front().*field, wakes.back().*field};
 }
 
 } // namespace
@@ -129,11 +161,11 @@ void measure_prefetch(std::wstring_view input_name, std::wstring_view output_nam
         std::array<std::int64_t, repetitions> times;
         std::array<std::uint64_t, repetitions> reads;
         for (std::size_t i = 0; i < repetitions; ++i) {
-            const auto before = process_reads();
+            const auto before = process_io().ReadOperationCount;
             const auto start = Clock::now();
             const auto primed = make_ring(path, {}, width, output);
             times[i] = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count();
-            reads[i] = process_reads() - before;
+            reads[i] = process_io().ReadOperationCount - before;
         }
         std::ranges::sort(times);
         std::ranges::sort(reads);
@@ -141,89 +173,104 @@ void measure_prefetch(std::wstring_view input_name, std::wstring_view output_nam
     }
 }
 
-void measure_prefetch_stream(std::wstring_view input_name, std::wstring_view output_name)
+namespace {
+
+void measure_stream_condition(const MeasurementFormat& format, std::uint32_t rate, std::uint32_t width,
+    double cycles_per_us)
 {
     using namespace wavplay_test;
-    using wavplay::stream::BlockStatus;
+    using namespace wavplay::stream;
     using Clock = std::chrono::steady_clock;
-    constexpr std::uint32_t rate = 96000;
-    constexpr std::uint32_t frames = 8 * rate;
-    constexpr std::size_t width = 256;
-    constexpr std::uint64_t blocks = frames / width;
+    // Two seconds of priming plus roughly 22 half-second refills. End on a whole block.
+    constexpr std::uint64_t seconds = 13;
     constexpr std::uint64_t ns_per_second = 1000000000;
-    static_assert(frames % width == 0);
-    const auto [input, output_type, output] = measurement_format(input_name, output_name, rate);
+    const auto blocks = seconds * rate / width;
+    const auto frames = static_cast<std::uint32_t>(blocks * width);
     TempFile file;
-    const auto* path = file.write(measurement_wave(input, rate, frames));
-    Bytes left(width * output.bytes()), right(left.size());
+    const auto* path = file.write(measurement_wave(format.input, rate, frames));
+    Bytes left(width * format.output.bytes()), right(left.size());
 
-    std::printf("%u kHz stereo %s, 8 seconds, %zu frames per block\n", rate / 1000, input.label, width);
-    std::printf("Output: %s\n", wavplay::asio::sample_type_name(output_type));
-    std::puts("Paced refill diagnostic: Sleep(10), default timer, no ASIO driver opened.");
-    std::puts("This is not an ASIO deadline or power measurement.");
-    std::puts("CPU is process kernel+user time (coarse OS accounting), including harness and producer.");
-    std::puts("Read operations are process counts for a generated cached WAV, not physical disk I/O.");
-    std::puts("Maximum harness wake lateness is relative to the earliest due block in each batch.");
-    if (input.sample == int24_in32_le) { std::puts("Priming includes whole-file unused-bit validation."); }
-
-    const auto reads_before = process_reads();
-    const auto prime_start = Clock::now();
-    auto ring = make_ring(path, {}, width, output);
-    const auto prime_us = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - prime_start).count();
+    DWORD producer_id{};
+    PrefetchRing ring([&] {
+        producer_id = GetCurrentThreadId();
+        return PrefetchRing::PreparedTracks{retain_playable_track(path)};
+    }, width, format.output);
+    wavplay::core::UniqueHandle producer(OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, producer_id));
+    if (!producer) { wavplay::core::throw_last_error("OpenThread"); }
     auto consumer = ring.consumer();
-    const auto reads_primed = process_reads();
-    const auto cpu_start = process_cpu_100ns();
-    const auto start = Clock::now();
-    std::uint64_t consumed_blocks{}, consumed_frames{}, empty_count{}, max_lateness_ns{};
+    auto previous = sample(producer.get());
+    std::optional<Counters> wake_start;
+    std::vector<Counters> wakes;
+    std::uint64_t consumed_blocks{}, consumed_frames{}, empty_count{};
     bool eof{};
-    const char* failure = nullptr;
 
-    // Consume all blocks due at each wake, without polling or changing timer
-    // resolution. This deliberately measures paced ring refills, not an ASIO
-    // callback's individual deadlines or the machine's electrical activity.
-    while (consumed_blocks < blocks && !eof && !failure) {
+    const auto start = Clock::now();
+    while (consumed_blocks < blocks) {
         Sleep(10);
+        // Sample at the end of the preceding batch's sleep, before the next pop
+        // can wake the producer. Close on the first quiet period to include the
+        // conversion and return to waiting after the last ReadFile.
+        const auto now = sample(producer.get());
+        if (now.reads != previous.reads) {
+            if (!wake_start) { wake_start = previous; }
+        } else if (wake_start) {
+            wakes.push_back({now.reads - wake_start->reads, now.bytes - wake_start->bytes,
+                now.cycles - wake_start->cycles});
+            wake_start.reset();
+        }
+        previous = now;
+
         const auto elapsed_ns = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count());
-        // Clamp before multiplication, including after an arbitrarily late wake.
-        const auto due_blocks = std::min(elapsed_ns, 8 * ns_per_second) * rate / (width * ns_per_second);
-        if (due_blocks > consumed_blocks) {
-            const auto next_deadline_ns = (consumed_blocks + 1) * width * ns_per_second / rate;
-            max_lateness_ns = std::max(max_lateness_ns, elapsed_ns - next_deadline_ns);
-        }
+        const auto due_blocks = std::min(elapsed_ns, seconds * ns_per_second) * rate / (width * ns_per_second);
         while (consumed_blocks < due_blocks) {
             const auto popped = consumer.pop(left.data(), right.data());
             if (popped.status == BlockStatus::empty) {
                 ++empty_count;
-                failure = "A due block was empty; the diagnostic does not wait for recovery";
-                break;
+                throw std::runtime_error("A due block was empty");
             }
-            if (popped.status == BlockStatus::read_error) {
-                failure = "The producer reported a read failure";
-                break;
-            }
+            if (popped.status == BlockStatus::read_error) { throw std::runtime_error("Producer read failure"); }
             ++consumed_blocks;
             consumed_frames += popped.valid_frames;
             eof = popped.status == BlockStatus::last;
             if (popped.valid_frames != width || eof != (consumed_blocks == blocks)) {
-                failure = "Unexpected valid-frame count or EOF position";
-                break;
+                throw std::runtime_error("Unexpected valid-frame count or EOF position");
             }
         }
     }
-    const auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count();
-    const auto cpu_100ns = process_cpu_100ns() - cpu_start;
+    // Normally the ring drains for many quiet periods after the final read.
+    const auto drained = sample(producer.get());
+    if (wake_start || drained.reads != previous.reads) {
+        const auto from = wake_start.value_or(previous);
+        wakes.push_back({drained.reads - from.reads, drained.bytes - from.bytes, drained.cycles - from.cycles});
+    }
     ring.stop();
-    const auto reads_after = process_reads();
-    if (ring.read_failed()) { failure = "The producer reported a read failure"; }
-    if (!failure && (consumed_frames != frames || !eof)) { failure = "Incomplete stream or missing EOF"; }
+    if (ring.read_failed() || consumed_frames != frames || !eof) { throw std::runtime_error("Incomplete stream"); }
+    if (wakes.size() < 20) { throw std::runtime_error("Fewer than 20 refill wakes observed"); }
 
-    std::printf("prime_us=%lld  post_prime_elapsed_us=%lld  post_prime_process_cpu_ms=%.3f\n",
-        prime_us, elapsed_us, static_cast<double>(cpu_100ns) / 10000.0);
-    std::printf("process_reads_total=%llu  process_reads_post_prime=%llu\n",
-        reads_after - reads_before, reads_after - reads_primed);
-    std::printf("frames=%llu/%u  blocks=%llu/%llu  eof=%u  empty=%llu  producer_failed=%u\n",
-        consumed_frames, frames, consumed_blocks, blocks, eof ? 1U : 0U, empty_count, ring.read_failed() ? 1U : 0U);
-    std::printf("max_harness_wake_lateness_us=%.3f\n", static_cast<double>(max_lateness_ns) / 1000.0);
-    if (failure) { throw std::runtime_error(failure); }
+    const auto reads = summarize(wakes, &Counters::reads);
+    const auto cpu = summarize(wakes, &Counters::cycles);
+    const auto bytes = summarize(wakes, &Counters::bytes);
+    std::printf("%7u %12u %5zu %9.1f %9llu %9llu %10.3f %10.3f %10.3f %12.0f %8llu %3u %5llu\n",
+        rate, width, wakes.size(), reads.median, reads.min, reads.max, cpu.median / cycles_per_us,
+        static_cast<double>(cpu.min) / cycles_per_us, static_cast<double>(cpu.max) / cycles_per_us,
+        bytes.median, consumed_frames, eof ? 1U : 0U, empty_count);
+    std::fflush(stdout);
+}
+
+} // namespace
+
+void measure_prefetch_stream(std::wstring_view input_name, std::wstring_view output_name)
+{
+    struct Condition { std::uint32_t rate, width; };
+    constexpr Condition conditions[]{{44100, 8}, {44100, 16}, {44100, 64}, {88200, 16}, {176400, 16}, {96000, 256}};
+    const auto format = measurement_format(input_name, output_name, conditions[0].rate);
+    const auto cycles_per_us = timestamp_cycles_per_us();
+    std::printf("Paced stereo %s -> %s, Sleep(10), cached WAV, timestamp cycles/us=%.3f\n",
+        format.input.label, wavplay::asio::sample_type_name(format.output_type), cycles_per_us);
+    std::puts("CPU us approximate producer on-CPU time. Reads and source bytes are post-prime process I/O.");
+    std::puts("rate_hz block_frames wakes reads_med reads_min reads_max cpu_us_med cpu_us_min cpu_us_max source_B_med frames eof empty");
+    for (const auto [rate, width] : conditions) {
+        measure_stream_condition(format, rate, width, cycles_per_us);
+    }
 }
