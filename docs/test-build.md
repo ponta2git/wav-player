@@ -81,19 +81,29 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 
 - 入力・操作
 
-  - Releaseの `wavplay.exe` と隣のPDB。否定確認は、木の複製の `SegmentRenderer::render` に `OutputDebugStringW`・AVX512の組み込み関数・可変長の `memcpy` を加え、または `silence` を `memset` に戻して `out\` 以外へ出力した検証用ビルドと、実際の逆アセンブルを書き換えた入力。
+  - Releaseの `wavplay.exe` と隣のPDB。否定確認は、木の複製の `SegmentRenderer::render` に `OutputDebugStringW`・256 bit命令を生成する組み込み関数・AVX512の組み込み関数・可変長の `memcpy` を加え、または `silence` を `memset` に戻して `out\` 以外へ出力した検証用ビルドと、実際の逆アセンブルを書き換えた入力。
   - いずれも `[Management.Automation.Language.Parser]::ParseFile` で `scripts/verify.ps1` から `Get-CheckedOutput` と `Assert-Rejected` の定義を取り出し、`scripts/verification/disassembly.ps1`・`realtime-code.ps1`・`startup-code.ps1` の関数定義を読み込む。
   - `Assert-RealTimeCode` に、PDBを隣に置いた実行ファイルと `dumpbin.exe` のパスを渡して監査する。書き換えた入力は、`/disasm:nobytes` の呼び出しにだけ用意した出力を返す `Get-CheckedOutput` を後から定義して与える。呼び出し先と入口を `wavplay::ui`・`wavplay::settings`・`wavplay::playlist` の装飾名・非装飾名へ改名した入力も与える。
 
 - 合格条件
 
   - `verify.ps1` が `dumpbin /disasm:nobytes` を大小文字を区別して読み、`switch_buffer`・`sample_rate_changed`・`asio_message`（コールバック表の項目）と、関数として残れば `is_streaming`（表の項目ではなく、`switch_buffer` の下で呼ばれる）から直接の呼び出し・ジャンプを推移的にたどる。
-  - 到達した製品の関数はインライン展開の形によらず許すが、サイズ優先でビルドする `wavplay::ui`・`wavplay::settings`・`wavplay::playlist` の関数（装飾名・非装飾名とも）に到達すれば、その関数を示して失敗する。取り込み関数は `SetEvent` だけを許す。整数AVX2/BMIとLZCNT・MOVBE等は起動契約内で許し、YMMの幅だけでは拒否しない。
+  - 到達した製品の関数はインライン展開の形によらず許すが、サイズ優先でビルドする `wavplay::ui`・`wavplay::settings`・`wavplay::playlist` の関数（装飾名・非装飾名とも）に到達すれば、その関数を示して失敗する。取り込み関数は `SetEvent` だけを許す。整数AVX2/BMIとLZCNT・MOVBE等は起動契約と以下の命令規則の範囲で許す。
   - 呼び出し先　ほかの取り込み関数、間接呼び出し、CRTの `memcpy`・`memset` を含む製品外の関数、`__chkstk`・GSクッキー・`__guard_*`・`_CxxThrowException`・`operator new/delete` は違反。
   - 命令　浮動小数点の算術・変換・比較（VEX形式を含む）、許可した整数・移動命令以外のVEX命令、AVX512/EVEX、zmm・マスクレジスターのオペランド、AVX512のマスク命令 `k*` は違反。CRTのCPU判定（`__isa_available`・`__isa_enabled`・`__isa_inverted`・`__favor`）の読み取りも拒否する。
+  - 幅　YMMレジスターまたは `ymmword` オペランドを使う命令を拒否する。オペランドのない `vzeroupper` と `vzeroall` も拒否する。
   - 診断　違反やint3の詰め物以外の解読できない行は関数と命令を示す。ラベル欠落はPDB、入口欠落は関数名を示して失敗する。
   - 間接ジャンプは、製品関数の中で連続する4命令 `lea B,[イメージベース]`・`mov E,dword ptr [B+I*4+D]`・`add R,B`（RはEの64ビットでBと別）・`jmp R` からなり、表（イメージベース+D）が `jmp` より後ろの同じ関数内にあるMSVCのswitchの分岐だけを許して表示し、その表から先をデータとして読まない。間に別の命令が入る形（`lea` の巻き上げを含む）は間接ジャンプとして失敗する。
   - 製品の関数・命令・ロック付き命令の数、取り込み関数の呼び出し、4 KiBのコードページを表示する。
+
+**Releaseの補充の定常経路の機械語**
+
+- 入力・操作　コールバック監査と同じ逆アセンブルを使う。否定確認は、木の複製で変換カーネル1つに256 bit命令を生成する組み込み関数を加え、`out\` 以外へReleaseをビルドして監査する。
+- 合格条件
+
+  - `PrefetchRing::Impl::fill_slots` と `wavplay::audio` の無名名前空間にある全関数を入口とする。変換カーネルは間接呼び出しなので、関数名から拾う。`fill_slots` が見つからない場合と、カーネルが1つも見つからない場合は失敗する。
+  - 製品の関数への直接の呼び出し・ジャンプをたどり、曲境界の `GaplessRun::advance_track` の手前で止める。到達した各関数にはコールバックと同じ幅の規則だけを適用する。取り込み関数、CRT、例外の送出はこの監査で許す。
+  - 補充を準備する `PrefetchRing::Impl::produce` と `GaplessRun::advance_track` は、YMMオペランドを使う命令と `vzeroupper` の件数を関数ごとに表示する。件数は参考値とする。
 
 **ReleaseのCRTの表明**
 
@@ -118,7 +128,10 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 実際の監査が合格した後、`verify.ps1` が各複製を同じ判定に通し、加えた違反の理由で拒否されなければ失敗する。挿入は監査が見つけた入口に行うので、特定のコードの形を前提にしない。規則を1つずつ無効にした監査スクリプトの複製では、その規則の件で失敗する。
 
 - PEヘッダー・取り込みDLL　コンソールの副系統、GUARD_CF、`CET compatible`、ネットワーク媒体のスワップの印の欠落、LTCGの印の欠落、PDBのパス、`repro` の欠落、許可リスト外のDLL、取り込まれなくなったDLLの9件。
-- 逆アセンブル　`switch_buffer` の最初の命令の直後に挿入した `OutputDebugStringW` の取り込み呼び出し、`call rax`、`jmp` より前の表を読むswitchの形、`addsd`、`__chkstk`、`operator new`、zmmのオペランド、YMMオペランドを使うAVX512の `vmovdqu64`、VEXの浮動小数点演算 `vaddsd`、`__isa_available` の読み取り、`memcpy`、存在しない呼び出し先、データの行と、入口の改名、入口の `wavplay::ui` への改名、ラベルの削除の16件に、たどった呼び出し先が関数として残ればその `ui` の装飾名への改名を加える。
+- 逆アセンブルはコールバック18件と補充2件の計20件を検査する。コールバックからたどった呼び出し先が関数として残れば、その関数を `wavplay::ui` に改名する1件を加える。
+
+  - コールバック　`switch_buffer` の最初の命令の直後に、`OutputDebugStringW` の取り込み呼び出し、`call rax`、`jmp` より前の表を読むswitchの形、`addsd`、`__chkstk`、`operator new`、zmmのオペランド、YMMオペランドを使うAVX512の `vmovdqu64`、`vmovdqu ymm0,ymmword ptr [rcx]`、`vzeroupper`、`vaddsd`、`__isa_available` の読み取り、`memcpy`、存在しない呼び出し先、データの行をそれぞれ挿入する。入口の改名、入口の `wavplay::ui` への改名、ラベルの削除も試す。
+  - 補充　`fill_slots` と最初の変換カーネルに、それぞれYMM命令を挿入する。コールバックのYMM命令・`vzeroupper` と合わせた4件は幅の規則を理由に拒否する。
 
 CRTの表明・stdio・ブロック関数は前節の挿入例を拒否する。`scripts/verification/startup-code.ps1` は実際の起動ガードでの `vmovdqu ymm0,ymmword ptr [rcx]` と `call rax`、初期化関数での `vzeroupper` とCPU確認前の `run_application` 呼び出しをそれぞれ拒否する。ビルド設定・マニフェスト・版情報の監査には同じ自動自己検査がない。
 

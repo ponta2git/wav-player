@@ -7,7 +7,30 @@
 # points, follows direct calls and jumps through product code, whatever was
 # inlined, and fails on forbidden constructs, on functions of the GUI-side
 # layers and on lines it cannot read rather than on a particular code shape.
-# Spin waits and semantic changes stay invisible to it.
+# The steady refill walk uses the same listing and checks only instruction
+# width. Spin waits and semantic changes stay invisible to these audits.
+
+# Classifies the width violations shared by the callback and refill audits.
+# Count instructions, even when both operands name YMM.
+function Get-WideInstruction {
+    param([string]$Mnemonic, [string]$Operands)
+    if ($Mnemonic -cin 'vzeroupper', 'vzeroall') { return $Mnemonic }
+    if ($Operands -cmatch '\bymm(?:\d+|word)\b') { return 'ymm' }
+}
+
+# Resolve a direct branch in either walk. Local jumps belong to the function
+# already being scanned. Internal-linkage callees can appear as addresses.
+function Get-DirectBranchTargets {
+    param($Index, [int]$Current, [string]$Operand, [string]$AddressOperand)
+    if ($Operand -cmatch $AddressOperand) {
+        $target = [Convert]::ToUInt64($Operand, 16)
+        $function = $Index.Functions[$Current]
+        if ($target -ge $function.Start -and $target -le $function.End) { return $Current }
+        if ($Index.ByAddress.ContainsKey($target)) { return $Index.ByAddress[$target] }
+    } elseif ($Index.ByName.ContainsKey($Operand)) {
+        return $Index.ByName[$Operand]
+    }
+}
 
 # Returns the indexes of the callback entry points in Functions, the functions
 # named first coming first, and adds a failure for each required one it cannot find.
@@ -71,9 +94,8 @@ function Test-RealTimeListing {
     $floatingPoint = '^v?(?:add|sub|mul|div|sqrt|min|max|rcp|rsqrt|hadd|hsub|dp|round)(?:ps|pd|ss|sd)$|^v?cvt|^v?u?comis[sd]$|^v?f'
     # The product has one AVX2 path; the baseline startup gate has already
     # checked its scalar extensions and enabled XMM/YMM state. Enumerate
-    # permitted VEX integer/move instructions, so AVX-512 forms using only
-    # ymm registers (such as vmovdqu64) cannot slip through a width check.
-    $vexInteger = '^v(?:zero(?:upper|all)|mov(?:d|q|dqa|dqu|aps|ups|apd|upd|ss|sd|hlps|lhps)|(?:and|andn|or|xor)p[sd]|p(?:and|andn|or|xor|add[bwdq]|sub[bwdq]|sll[wdq]|srl[wdq]|sra[wd]|sllv[dq]|srlv[dq]|sravd|s[lr]ldq|shuf[bwd]|shuf[lh]w|unpck[lh](?:bw|wd|dq|qdq)|cmp(?:eq|gt)[bwdq]|blend(?:w|d|vb)|pack(?:ss|us)(?:wb|dw)|mov(?:sx|zx)(?:bw|bd|bq|wd|wq|dq)|broadcast[bwdq]|min(?:s|u)[bwd]|max(?:s|u)[bwd])|perm(?:2i128|d|q)|(?:extract|insert)i128|(?:extract|insert)f128)$'
+    # permitted VEX integer/move instructions independently of operand width.
+    $vexInteger = '^v(?:mov(?:d|q|dqa|dqu|aps|ups|apd|upd|ss|sd|hlps|lhps)|(?:and|andn|or|xor)p[sd]|p(?:and|andn|or|xor|add[bwdq]|sub[bwdq]|sll[wdq]|srl[wdq]|sra[wd]|sllv[dq]|srlv[dq]|sravd|s[lr]ldq|shuf[bwd]|shuf[lh]w|unpck[lh](?:bw|wd|dq|qdq)|cmp(?:eq|gt)[bwdq]|blend(?:w|d|vb)|pack(?:ss|us)(?:wb|dw)|mov(?:sx|zx)(?:bw|bd|bq|wd|wq|dq)|broadcast[bwdq]|min(?:s|u)[bwd]|max(?:s|u)[bwd]))$'
     $beyondContract = '\bzmm\d|\bk[0-7]\b|__isa_available|__isa_enabled|__isa_inverted|__favor'
     $runtimeSupport = '__chkstk|__security_|__GSHandlerCheck|_CxxThrowException|__guard_|\?\?[23]@|\?\?_[UV]@'
     $register = '^r(?:[abcd]x|[sd]i|[sb]p|\d{1,2})$'
@@ -102,7 +124,8 @@ function Test-RealTimeListing {
     $locked = 0
     $pages = @{}
     while ($queue.Count) {
-        $function = $functions[$queue.Dequeue()]
+        $current = $queue.Dequeue()
+        $function = $functions[$current]
         if ($function.Name -cmatch $guiSide) {
             $failures.Add("GUI-side function $($function.Name) in the real-time call graph")
         }
@@ -134,6 +157,9 @@ function Test-RealTimeListing {
             }
             if ($mnemonic -cmatch $floatingPoint) {
                 $failures.Add("floating-point arithmetic in $at")
+            }
+            if (Get-WideInstruction $mnemonic $operands) {
+                $failures.Add("256-bit instruction in $at")
             }
             if ($mnemonic -cmatch '^k' -or ($mnemonic -cmatch '^v' -and $mnemonic -cnotmatch $vexInteger) -or
                 $operands -cmatch $beyondContract) {
@@ -169,19 +195,7 @@ function Test-RealTimeListing {
                 $failures.Add("indirect call or jump in $at")
                 continue
             }
-            # Branches inside the function, and callees that dumpbin prints as
-            # addresses because they have internal linkage (anonymous namespace).
-            if ($operands -cmatch $addressOperand) {
-                $target = [Convert]::ToUInt64($operands, 16)
-                if ($target -ge $function.Start -and $target -le $function.End) {
-                    continue
-                }
-                $targets = @($index.ByAddress[$target] | Where-Object { $null -ne $_ })
-            } elseif ($index.ByName.ContainsKey($operands)) {
-                $targets = $index.ByName[$operands]
-            } else {
-                $targets = @()
-            }
+            $targets = @(Get-DirectBranchTargets $index $current $operands $addressOperand)
             if (-not $targets.Count) {
                 $failures.Add("unknown branch target in $at")
             }
@@ -211,6 +225,95 @@ function Test-RealTimeListing {
     $audit.Summary.Add("Real-time audit functions: $($names -join ', ')")
     $switches | ForEach-Object { $audit.Summary.Add("Real-time audit switch table: $_") }
     $audit
+}
+
+# Walk steady refill code from fill_slots and the indirectly selected kernels.
+# The producer's outer loop and the track transition are reporting boundaries.
+function Test-RefillListing {
+    param([string[]]$Lines, $Index)
+    $audit = [pscustomobject]@{
+        Failures = [Collections.Generic.List[string]]::new(); Summary = [Collections.Generic.List[string]]::new()
+        FillEntry = -1; KernelEntry = -1
+    }
+    $grammar = Get-DisassemblyGrammar
+    $queue = [Collections.Generic.Queue[int]]::new()
+    $boundaries = @{}
+    $counts = [ordered]@{ produce = @{ ymm = 0; vzeroupper = 0 }; advance_track = @{ ymm = 0; vzeroupper = 0 } }
+    $product = '@wavplay@@|^`?wavplay::'
+    # Internal-linkage kernels have qualified PDB labels. In a decorated
+    # free-function name, @@Y starts its signature after the owning namespace.
+    $kernel = '^`?wavplay::audio::`anonymous namespace''::|^\?(?:[^@]+@)+@?\?A0x[0-9a-f]+@audio@wavplay@@Y'
+    for ($k = 0; $k -lt $Index.Functions.Count; ++$k) {
+        $function = $Index.Functions[$k]
+        $name = $function.Name
+        if ($name -cmatch '^\?fill_slots@Impl@PrefetchRing@stream@wavplay@@|^`?wavplay::stream::PrefetchRing::Impl::fill_slots$') {
+            $queue.Enqueue($k)
+            if ($audit.FillEntry -lt 0) { $audit.FillEntry = $function.First }
+        } elseif ($name -cmatch $kernel) {
+            $queue.Enqueue($k)
+            if ($audit.KernelEntry -lt 0) { $audit.KernelEntry = $function.First }
+        } elseif ($name -cmatch '^\?produce@Impl@PrefetchRing@stream@wavplay@@|^`?wavplay::stream::PrefetchRing::Impl::produce$') {
+            $boundaries[$k] = 'produce'
+        } elseif ($name -cmatch '^\?advance_track@GaplessRun@stream@wavplay@@|^`?wavplay::stream::GaplessRun::advance_track$') {
+            $boundaries[$k] = 'advance_track'
+        }
+    }
+    if ($audit.FillEntry -lt 0) { $audit.Failures.Add('refill root fill_slots not found in the disassembly') }
+    if ($audit.KernelEntry -lt 0) { $audit.Failures.Add('no audio anonymous-namespace kernels in the disassembly') }
+
+    # Scan boundary bodies once for the summary, without following their calls.
+    foreach ($k in $boundaries.Keys) { $queue.Enqueue($k) }
+    $seen = [Collections.Generic.HashSet[int]]::new()
+    while ($queue.Count) {
+        $current = $queue.Dequeue()
+        if (-not $seen.Add($current)) { continue }
+        $function = $Index.Functions[$current]
+        $boundary = $boundaries[$current]
+        for ($i = $function.First; $i -le $function.Last; ++$i) {
+            if ($Lines[$i] -cnotmatch $grammar.InstructionLine) { continue }
+            $code = $Matches[2]
+            if ($code -cnotmatch $grammar.Instruction) { continue }
+            $mnemonic, $operand = $Matches[2], $Matches[3]
+            $width = Get-WideInstruction $mnemonic $operand
+            if ($boundary) {
+                if ($width -cin 'ymm', 'vzeroupper') { ++$counts[$boundary][$width] }
+                continue
+            }
+            if ($width) {
+                $audit.Failures.Add("256-bit instruction in $($function.Name) at $($Lines[$i].Trim())")
+            }
+            if ($mnemonic -cne 'call' -and $mnemonic -cnotlike 'j*') { continue }
+            if ($operand -cmatch '\[') { continue } # Imports and other indirect calls.
+            $targets = @(Get-DirectBranchTargets $Index $current $operand $grammar.AddressOperand)
+            if (-not $targets.Count -and ($operand -cmatch $product -or $operand -cmatch $grammar.AddressOperand)) {
+                $audit.Failures.Add("unresolved direct branch in $($function.Name) at $($Lines[$i].Trim())")
+            }
+            foreach ($target in $targets) {
+                if ($Index.Functions[$target].Name -cmatch $product -and -not $seen.Contains($target)) {
+                    $queue.Enqueue($target)
+                }
+            }
+        }
+    }
+    $audit.Summary.Add("Refill audit: $($seen.Count - $boundaries.Count) steady product functions")
+    foreach ($name in $counts.Keys) {
+        if ($boundaries.ContainsValue($name)) {
+            $audit.Summary.Add("Refill audit (report only): $name ymm=$($counts[$name].ymm) vzeroupper=$($counts[$name].vzeroupper)")
+        } else {
+            $audit.Summary.Add("Refill audit (report only): $name not emitted")
+        }
+    }
+    $audit
+}
+
+function Assert-RefillSelfCheck {
+    param([string[]]$Lines, $Audit)
+    foreach ($entry in $Audit.FillEntry, $Audit.KernelEntry) {
+        $altered = Add-ListingInstruction $Lines $entry 'vmovdqu     ymm0,ymmword ptr [rcx]'
+        $result = Test-RefillListing $altered (Get-DisassemblyFunctions $altered)
+        Assert-Rejected 'Refill audit' "a ymm move at $($Lines[$entry].Trim())" $result.Failures '256-bit instruction in '
+    }
+    Write-Output 'Refill audit self-check: 2 altered listings rejected'
 }
 
 # Release defines NDEBUG (build/Common.props), so product asserts check only in
@@ -300,6 +403,8 @@ function Assert-RealTimeSelfCheck {
         @{ Case = 'a stack probe'; Expect = $code; Insert = 'call        __chkstk' }
         @{ Case = 'operator new'; Expect = $code; Insert = 'call        ??2@YAPEAX_K@Z' }
         @{ Case = 'a zmm operand'; Expect = $isa; Insert = 'vmovdqu64   zmm0,zmmword ptr [rcx]' }
+        @{ Case = 'a ymm move'; Expect = '256-bit instruction in '; Insert = 'vmovdqu     ymm0,ymmword ptr [rcx]' }
+        @{ Case = 'vzeroupper'; Expect = '256-bit instruction in '; Insert = 'vzeroupper' }
         @{ Case = 'AVX-512 with a ymm operand'; Expect = $isa; Insert = 'vmovdqu64   ymm0,ymmword ptr [rcx]' }
         @{ Case = 'VEX floating-point arithmetic'; Expect = 'floating-point arithmetic in '; Insert = 'vaddsd      xmm0,xmm1,xmm2' }
         @{ Case = 'a CPU-level read'; Expect = $isa; Insert = 'cmp         dword ptr [__isa_available],2' }
@@ -366,7 +471,7 @@ function Assert-NoCrtRoutines {
 }
 
 # Audits the Release executable's machine code from one disassembly: the callback
-# walk with its self-check, the CRT assert, the CRT routines, and the startup
+# and refill walks with their self-checks, the CRT assert and routines, and the startup
 # code (startup-code.ps1).
 function Assert-RealTimeCode {
     param([string]$Executable, [string]$Dumpbin)
@@ -377,7 +482,13 @@ function Assert-RealTimeCode {
     if ($audit.Failures.Count) {
         throw "Real-time audit of $Executable failed against the callback rules in docs/architecture.md:`n$($audit.Failures -join "`n")"
     }
+    $refill = Test-RefillListing $lines $audit.Index
+    $refill.Summary | ForEach-Object { Write-Output $_ }
+    if ($refill.Failures.Count) {
+        throw "Refill audit of $Executable failed:`n$($refill.Failures -join "`n")"
+    }
     Assert-RealTimeSelfCheck $lines $base $audit
+    Assert-RefillSelfCheck $lines $refill
     $entry = $audit.Index.Functions[$audit.Roots[0]].First # The first instruction of switch_buffer.
     Assert-NoCrtAssert $Executable $lines $entry
     Assert-NoCrtRoutines $Executable $lines $entry
