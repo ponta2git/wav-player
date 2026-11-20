@@ -77,6 +77,8 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 
 起動時は、ガードおよび製品側のCRT/TLS初期化、CPU要件を満たさなかった後の終了経路をSSE4.2の範囲に制限する。ガード通過後のコールバックには整数AVX2/BMIを含む別の[起動契約](architecture.md#命令セットの前提)を適用する。
 
+`dumpbin` が宛先を `シンボル名 (RVA)` と表示する場合、イメージベースを加えたアドレスと関数入口の名前を照合する。起動時の `atexit` に登録されるデストラクターは、従来の絶対アドレス表記とこの表記を読み、リンクマップを確認して到達経路を監査する。
+
 **Releaseのコールバック経路の機械語**
 
 - 入力・操作
@@ -119,7 +121,7 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 - 合格条件
 
   - `verify.ps1` が機械語監査と同じ逆アセンブルで、CRTのstdioの出力関数（`fputs`・`fwrite`・`fputc`・`puts`・`__stdio_common_vf(w)printf` 系など）の名前がラベルか操作対象にあれば失敗し、`wavplay::audio` の関数（引数の型ではなく関数自身の名前空間で判定する）から `memcpy`・`memmove`・`memset` への直接の `call`・`jmp` があれば関数と命令を示して失敗する。
-  - `wavplay::audio` の関数がなければPDBを示して失敗する。`switch_buffer` へ挿入した `call fputs` と、最初の `wavplay::audio` の関数へ挿入した `call memcpy` を拒否することも確かめる。CRTの終了処理の `_fflush_nolock` などは対象にしない。名前だけを読み、インライン展開の形に依存しない。
+  - `wavplay::audio` の関数がなければPDBを示して失敗する。`switch_buffer` へ挿入した `call fputs` と、最初の `wavplay::audio` の関数へ挿入した `call memcpy`（名前のみ、名前とRVAの両形式）を拒否することも確かめる。CRTの終了処理の `_fflush_nolock` などは対象にしない。名前だけを読み、インライン展開の形に依存しない。
 
 ## 監査の自己検査
 
@@ -128,12 +130,12 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 実際の監査が合格した後、`verify.ps1` が各複製を同じ判定に通し、加えた違反の理由で拒否されなければ失敗する。挿入は監査が見つけた入口に行うので、特定のコードの形を前提にしない。規則を1つずつ無効にした監査スクリプトの複製では、その規則の件で失敗する。
 
 - PEヘッダー・取り込みDLL　コンソールの副系統、GUARD_CF、`CET compatible`、ネットワーク媒体のスワップの印の欠落、LTCGの印の欠落、PDBのパス、`repro` の欠落、許可リスト外のDLL、取り込まれなくなったDLLの9件。
-- 逆アセンブルはコールバック18件と補充2件の計20件を検査する。コールバックからたどった呼び出し先が関数として残れば、その関数を `wavplay::ui` に改名する1件を加える。
+- 逆アセンブルはコールバック19件と補充3件の計22件を拒否することを確かめる。コールバックからたどった呼び出し先が関数として残れば、その関数を `wavplay::ui` に改名する1件を加える。
 
-  - コールバック　`switch_buffer` の最初の命令の直後に、`OutputDebugStringW` の取り込み呼び出し、`call rax`、`jmp` より前の表を読むswitchの形、`addsd`、`__chkstk`、`operator new`、zmmのオペランド、YMMオペランドを使うAVX512の `vmovdqu64`、`vmovdqu ymm0,ymmword ptr [rcx]`、`vzeroupper`、`vaddsd`、`__isa_available` の読み取り、`memcpy`、存在しない呼び出し先、データの行をそれぞれ挿入する。入口の改名、入口の `wavplay::ui` への改名、ラベルの削除も試す。
-  - 補充　`fill_slots` と最初の変換カーネルに、それぞれYMM命令を挿入する。コールバックのYMM命令・`vzeroupper` と合わせた4件は幅の規則を理由に拒否する。
+  - コールバック　`switch_buffer` の最初の命令の直後に、`OutputDebugStringW` の取り込み呼び出し、`call rax`、`jmp` より前の表を読むswitchの形、`addsd`、`__chkstk`、`operator new`、zmmのオペランド、YMMオペランドを使うAVX512の `vmovdqu64`、`vmovdqu ymm0,ymmword ptr [rcx]`、`vzeroupper`、`vaddsd`、`__isa_available` の読み取り、`memcpy`、存在しない呼び出し先、名前とRVAの不一致、データの行をそれぞれ挿入する。入口の改名、入口の `wavplay::ui` への改名、ラベルの削除も試す。名前とRVAが一致する呼び出しの合格も確認する。
+  - 補充　`fill_slots` と最初の変換カーネルに、それぞれYMM命令を挿入する。コールバックのYMM命令・`vzeroupper` と合わせた4件は幅の規則を理由に拒否する。`fill_slots` には一覧に存在しないRVAを伴う呼び出しも挿入する。
 
-CRTの表明・stdio・ブロック関数は前節の挿入例を拒否する。`scripts/verification/startup-code.ps1` は実際の起動ガードでの `vmovdqu ymm0,ymmword ptr [rcx]` と `call rax`、初期化関数での `vzeroupper` とCPU確認前の `run_application` 呼び出しをそれぞれ拒否する。ビルド設定・マニフェスト・版情報の監査には同じ自動自己検査がない。
+CRTの表明・stdio・ブロック関数は前節の挿入例を拒否する。`scripts/verification/startup-code.ps1` は実際の起動ガードでの `vmovdqu ymm0,ymmword ptr [rcx]` と `call rax`、初期化関数での `vzeroupper` とCPU確認前の `run_application` 呼び出しをそれぞれ拒否する。デストラクター登録は絶対アドレスと名前＋RVAの両形式の合格、名前とRVAの不一致と範囲外のRVAの拒否を確認する。ビルド設定・マニフェスト・版情報の監査には同じ自動自己検査がない。
 
 ## 実装レビューと手動での再現性確認
 

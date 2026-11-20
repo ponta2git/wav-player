@@ -19,6 +19,17 @@ function Get-DisassemblyGrammar {
         ImportOperand = '^qword ptr \[__imp_(\w+)\]$'
         # A direct target that dumpbin prints as an address, not as a name.
         AddressOperand = '^[0-9A-F]{8,16}$'
+        # MSVC 14.52 can append an eight-digit RVA to a symbol's name.
+        SymbolizedOperand = '^(\S.*?) \(([0-9A-F]{8})\)$'
+    }
+}
+
+# A symbolized target must match both the label and its actual entry address.
+function Get-SymbolizedFunctionAddress {
+    param($Index, [UInt64]$ImageBase, [string]$Name, [string]$Rva)
+    $address = $ImageBase + [Convert]::ToUInt32($Rva, 16)
+    if ($Index.ByAddress.ContainsKey($address) -and $Index.Functions[$Index.ByAddress[$address]].Name -ceq $Name) {
+        return $address
     }
 }
 
