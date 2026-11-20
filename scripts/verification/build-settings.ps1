@@ -57,7 +57,7 @@ function Test-CompileItem {
 }
 
 function Assert-BuildSettings {
-    param([string]$MSBuild, [string[]]$Projects, [string]$SourceRoot,
+    param($Tools, [string[]]$Projects, [string]$SourceRoot,
         [ValidateNotNullOrEmpty()][ValidateSet('Debug', 'Release', 'Debug-ASan')][string[]]$BuildProfiles = @('Release', 'Debug'))
     $policy = Get-BuildSettingsPolicy $SourceRoot
     $failures = [Collections.Generic.List[string]]::new()
@@ -66,9 +66,16 @@ function Assert-BuildSettings {
         $projectName = Split-Path -Leaf $project
         foreach ($profile in $BuildProfiles) {
             $configuration = if ($profile -eq 'Debug-ASan') { 'Debug' } else { $profile }
-            $arguments = @($project, '/nologo', '/p:Platform=x64', "/p:Configuration=$configuration", '/getItem:ClCompile')
+            $arguments = @($project, '/nologo', '/p:Platform=x64', "/p:Configuration=$configuration",
+                '/getProperty:VCToolsVersion,VCToolsInstallDir,WindowsTargetPlatformVersion', '/getItem:ClCompile')
             if ($profile -eq 'Debug-ASan') { $arguments += '/p:EnableASAN=true' }
-            $evaluation = Get-CheckedOutput $MSBuild $arguments | Out-String | ConvertFrom-Json
+            $evaluation = Get-CheckedOutput $Tools.MSBuild $arguments | Out-String | ConvertFrom-Json
+            $properties = $evaluation.Properties
+            if ($properties.VCToolsVersion -ne $Tools.ToolsVersion -or
+                ([string]$properties.VCToolsInstallDir).TrimEnd('\', '/') -ne $Tools.ToolsetDirectory -or
+                $properties.WindowsTargetPlatformVersion -ne $Tools.SdkVersion) {
+                $failures.Add("$projectName ($profile) does not select the verified MSVC toolset and Windows SDK.")
+            }
             $items = @($evaluation.Items.ClCompile)
             if (-not $items.Count) {
                 $failures.Add("no ClCompile items in $project ($profile)")

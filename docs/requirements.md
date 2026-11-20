@@ -7,7 +7,7 @@
 | 対象 | 条件 |
 |---|---|
 | 再生PC | 対象OSはWindows 11 25H2以降のx64。起動時にCPUのAVX2と付随命令（BMI1/BMI2、LZCNT、MOVBE、FMA、F16Cなど）、WindowsのAVX対応とXMM/YMM状態の保存を確認する。非対応なら理由を表示して終了し、SSEでの代替再生はしない。[命令セットの前提](architecture.md#命令セットの前提) |
-| ビルド | Visual Studio 2026安定版とMSBuildで `.sln` と `.vcxproj` を使い、Debug/Release x64をビルドする。安定版MSVC、確定済みC++23まで、静的CRT（Debugは `/MTd`、Releaseは `/MT`）を使う。CMakeとC++26固有の機能は対象外。 |
+| ビルド | Visual Studio 2026安定版 18.12以降とMSBuildで `.sln` と `.vcxproj` を使い、Debug/Release x64をビルドする。ローカルとCIで同じMSVC 14.52を使う。言語は確定済みC++23まで、CRTは静的リンク（Debugは `/MTd`、Releaseは `/MT`）。CMakeとC++26固有の機能は対象外。[ビルド設定](../Directory.Build.props) |
 | アプリ | 製品名はWAV Player、実行ファイルは `wavplay.exe`。音声出力はSteinberg ASIO SDK、画面はWin32の標準コントロールとシステムフォントを使う。製品名にASIO商標を使わず、UIにはロゴ、画像、独自テーマを用いない。 |
 
 公開物はGPL-3.0-onlyの自作ソース、スクリプト、文書、設定・ビルド定義に限る。SDK、機器ドライバー、音源、実行ファイルは同梱しない。[依存とライセンス](dependencies.md)

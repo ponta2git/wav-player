@@ -26,6 +26,11 @@ function ConvertTo-PublicDiagnostic([string]$Line) {
         $Line -match '^Toolset: MSVC [\d.]+, Windows SDK [\d.]+$') {
         return $Line
     }
+    $version = '[0-9]{1,5}(?:\.[0-9]{1,5}){3}'
+    if ($Line -cmatch "\AMSVC files: cl=$version, link=$version, dumpbin=$version\z" -or
+        $Line -cmatch '\ASource commit: [0-9a-f]{40}\z') {
+        return $Line
+    }
     if ($Line -match '^== (?<suite>[a-z][a-z0-9_]{0,63}) ==$') {
         return '== ' + $Matches.suite + ' =='
     }

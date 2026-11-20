@@ -20,17 +20,19 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1 -Analyze -IncludeASan
 ```
 
-1. 共有ライブラリと製品・試験の両EXEについて、登録と評価済みビルド設定を監査する。
+1. 固定版のMSVCの実ファイルとWindows SDKをビルド前に確認する。共有ライブラリと製品・試験の両EXEについて、登録と評価済みビルド設定を監査する。[ビルド設定](../Directory.Build.props)
 2. Debug・Release x64を静的解析付きで再ビルドし、Debug-ASanもビルドする。生成物は構成ごとの基準で監査する。
 3. ReleaseとDebug-ASanで試験群を実行する。Debugの実行時検査はDebug-ASanに含まれる。ソリューションのビルドやSDKヘッダーの検査だけでは再生機能の合否は決まらない。
 
-GitHub ActionsはReleaseとDebug／ASanを別のWindowsランナーで同時に開始する。各ランナーはSDKの取得・ハッシュ照合、担当構成の設定監査・ビルド・成果物監査を行う。Release側は `check-public-source.ps1 -Tracked`、公開・構成・再生フォルダー設定のPowerShell回帰、Releaseの全試験と製品起動試験を行う。Debug側はDebugの静的解析とDebug-ASanの全試験を行う。`Full verification` は両ジョブの成功を要求する。
+GitHub ActionsはPRのマージ候補と `main` へのpushで確定したSHAに対し、同じ全検証を行う。ReleaseとDebug／ASanは別のWindowsランナーで同時に開始する。各ランナーは固定版のMSVCを確認し、不足時はMicrosoft公式インストーラーで用意する。固定版を用意できなければビルド前に失敗する。
+
+各ランナーはASIO SDKの取得・ハッシュ照合、担当構成の設定監査・ビルド・成果物監査を行う。Release側は `check-public-source.ps1 -Tracked`、公開・構成・再生フォルダー設定のPowerShell回帰、Releaseの全試験と製品起動試験を行う。Debug側はDebugの静的解析とDebug-ASanの全試験を行う。`Full verification` は両ジョブの成功を要求する。
 
 製品起動試験はReleaseのGUI試験終了後、監査済みの `wavplay.exe` と空の `playlist.txt` を一時フォルダーに置く。初回起動を別の作業ディレクトリから行い、機器未設定の表示・設定案内・Play無効を確認する。Close後は期限内の終了コード1、EXE隣へのウィンドウ配置の保存、作業ディレクトリの設定の保持を検査する。手元で再現する場合は製品が起動していない専用ログオンセッションで `scripts/verify.ps1 -Configuration Release -TestReleaseStartup` を実行する。
 
 手動で `release_only` を選ぶと、Releaseのビルド・監査・全試験・製品起動試験を行う。結果は `Release diagnostics` に表示し、静的解析とDebug-ASanは「未実施」とする。
 
-CIの詳細ログはrunnerの一時領域で処理する。設定監査・ビルド・成果物監査・試験・製品起動の時間は、固定の工程名とミリ秒数で公開する。試験結果は合否、試験・ケース名、ソースのファイル名と行番号、数値の期待値と実測値に限る。既知の例外型は許可リストの型名だけを再構成し、GUI送信失敗は固定の識別子・メッセージ番号・Win32エラー番号だけを表示する。例外の詳細、ローカルパス、実行物は公開せず、実行物をartifactやReleaseへアップロードしない。
+CIはビルド前に検証対象のSHA、選択したMSVCツールセットとツールの実ファイル版、Windows SDKの版を表示する。詳細ログはrunnerの一時領域で処理する。設定監査・ビルド・成果物監査・試験・製品起動の時間は、固定の工程名とミリ秒数で公開する。試験結果は合否、試験・ケース名、ソースのファイル名と行番号、数値の期待値と実測値に限る。既知の例外型は許可リストの型名だけを再構成し、GUI送信失敗は固定の識別子・メッセージ番号・Win32エラー番号だけを表示する。例外の詳細、ローカルパス、実行物は公開せず、実行物をartifactやReleaseへアップロードしない。
 
 ## ドライバーなしで判定する項目
 

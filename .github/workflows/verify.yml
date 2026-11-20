@@ -30,6 +30,9 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Prepare pinned MSVC toolchain
+        shell: powershell
+        run: .\scripts\prepare-ci-toolchain.ps1
       - name: Verify source and Release x64
         shell: powershell
         run: .\scripts\ci.ps1 ${{ github.event_name == 'workflow_dispatch' && inputs.release_only && '-ReleaseOnly' || '-Worker Release' }}
@@ -43,6 +46,9 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Prepare pinned MSVC and AddressSanitizer toolchain
+        shell: powershell
+        run: .\scripts\prepare-ci-toolchain.ps1 -IncludeASan
       - name: Verify Debug and Debug-ASan x64
         shell: powershell
         run: .\scripts\ci.ps1 -Worker Debug

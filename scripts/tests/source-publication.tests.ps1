@@ -182,6 +182,11 @@ Write-Output 'TIMING Audit-Release 12 ms PRIVATE_CI_TOKEN'
 Write-Output 'TIMING Build-Debug -1 ms'
 Write-Output 'TIMING Test-Debug-ASan 1.5 ms'
 Write-Output 'TIMING Settings 9223372036854775808 ms'
+Write-Output 'Toolset: MSVC 14.52.37025, Windows SDK 10.0.26100.0'
+Write-Output 'MSVC files: cl=19.52.37029.0, link=14.52.37029.0, dumpbin=14.52.37029.0'
+Write-Output 'Source commit: 0123456789abcdef0123456789abcdef01234567'
+Write-Output 'MSVC files: cl=19.52.37029.0, link=14.52.37029.0, dumpbin=PRIVATE_CI_VERSION'
+Write-Output 'Source commit: 0123456789abcdef0123456789abcdef01234567 PRIVATE_CI_TOKEN'
 Write-Output '[FAIL] fixture numeric assertion: example field: expected 1, got 0 (fixture_tests.cpp:42)'
 Write-Output '[FAIL] fixture exception: C:\Users\PRIVATE_CI_FIXTURE\secret.log token=PRIVATE_CI_TOKEN'
 Write-Output '[FAIL] fixture GUI timeout: class std::runtime_error: GUI state transition: deadline expired; C:\Users\PRIVATE_CI_GUI\input.wav token=PRIVATE_CI_TOKEN (player_window_tests.cpp:1150)'
@@ -245,6 +250,9 @@ function Test-CiFullVerification {
         'TIMING Audit-Release 456 ms',
         'TIMING Test-Debug-ASan 789 ms',
         'TIMING Release-Startup 10 ms',
+        'Toolset: MSVC 14.52.37025, Windows SDK 10.0.26100.0',
+        'MSVC files: cl=19.52.37029.0, link=14.52.37029.0, dumpbin=14.52.37029.0',
+        'Source commit: 0123456789abcdef0123456789abcdef01234567',
         '[FAIL] fixture numeric assertion: expected 1, got 0 (fixture_tests.cpp:42)',
         '[FAIL] fixture exception',
         '[FAIL] fixture GUI timeout: exception=std::runtime_error (player_window_tests.cpp:1150)',

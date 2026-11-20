@@ -1,6 +1,8 @@
 <Project>
   <PropertyGroup>
     <RepoRoot>$(MSBuildThisFileDirectory)</RepoRoot>
+    <WavplayMsvcVersion>14.52.37025</WavplayMsvcVersion>
+    <VCToolsVersion>$(WavplayMsvcVersion)</VCToolsVersion>
     <BaseOutputPath>$(RepoRoot)out\</BaseOutputPath>
     <BuildFlavor Condition="'$(EnableASAN)' == 'true'">$(Configuration)-ASan</BuildFlavor>
     <BuildFlavor Condition="'$(BuildFlavor)' == ''">$(Configuration)</BuildFlavor>

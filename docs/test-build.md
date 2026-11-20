@@ -28,6 +28,7 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 
 **ビルドの設定**
 
+- ツールセット　`Directory.Build.props` でMSVCを `14.52.37025` に固定する。製品・共有ライブラリ・試験で同じ版を選び、ビルド前に `cl.exe`、`link.exe`、`dumpbin.exe` と、ASan構成で使うランタイムの存在を確認する。固定版がない環境や別の版を指定したビルドでは、コンパイルに入る前に失敗する。
 - 入力・操作　全検証では3つのプロジェクトのDebug・Release・Debug-ASanを `MSBuild /getItem:ClCompile` で評価し、`planar_conversion` 群をコンパイルする。否定確認は木の複製の `build/Common.props`・`build/WavplaySources.props`・試験プロジェクトを1か所ずつ変えて行う。
 - 各翻訳単位　`LanguageStandard=stdcpp23`。CRTはReleaseで `/MT`、Debug・Debug-ASanで `/MTd`。`EnableASAN` はDebug-ASanの全翻訳単位で有効にする。追加オプションは `/utf-8 /Zc:__cplusplus /arch:AVX2 /Zc:throwingNew /Zc:preprocessor /Brepro` の順に各1つ。起動ガードの `src/app/startup.cpp` と `src/wavplay/core/cpu_features.cpp` では同位置が `/arch:SSE4.2`。clは最後の競合指定を採るため、MSBuildが項目の設定の後に渡す `AdditionalOptions` の追加・重複（`/arch:AVX512`・`/Od`・`/GL-`・`-std:c++latest`・`/Zc:preprocessor-` 等）を拒否する。
 - 最適化　全体最適化はReleaseだけにあり、起動ガードの2翻訳単位は全構成で除外する。Releaseの製品コードは `src/wavplay/ui`・`settings`・`playlist` 配下（下位ディレクトリを含む）が `MinSpace`、それ以外は `MaxSpeed`。違反は翻訳単位と値を示す。
