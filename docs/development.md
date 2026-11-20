@@ -32,6 +32,8 @@
 
 `Full verification` は、GitHub Actionsが実行する全検証のチェック名である。
 
+MSVCを更新する場合は専用PRで `Directory.Build.props` の固定版、`.vsconfig` のコンポーネント、CIが不足時に使う公式インストーラーとそのハッシュを更新する。新しい版で、Releaseの機械語監査を含む `Full verification` をマージ前に通す。
+
 `main` の削除とforce pushは禁止で、直線履歴を保つ。この規則は所有者にも適用する。承認レビューは必須にしない。
 
 外部からのPRとIssueを受け付ける。採否と対応時期は所有者が判断する。

@@ -66,18 +66,34 @@ function Assert-Rejected {
 
 # The tools of the toolset and Windows SDK that MSBuild selects for the product.
 function Get-BuildTools {
-    param([string]$Installation, [string]$Project)
+    param([string]$Installation, [string]$Project, [switch]$IncludeASan)
     $msbuild = Join-Path $Installation 'MSBuild\Current\Bin\amd64\MSBuild.exe'
     $properties = (Get-CheckedOutput $msbuild @($Project, '/nologo', '/p:Platform=x64', '/p:Configuration=Release',
-        '/getProperty:VCToolsInstallDir,WindowsSdkDir,WindowsTargetPlatformVersion') | Out-String | ConvertFrom-Json).Properties
-    $bin = Join-Path $properties.VCToolsInstallDir 'bin\Hostx64\x64'
+        '/getProperty:VCToolsVersion,VCToolsInstallDir,WindowsSdkDir,WindowsTargetPlatformVersion') | Out-String | ConvertFrom-Json).Properties
+    $version = Get-RequiredMsvcVersion
+    $expectedDirectory = Join-Path $Installation "VC\Tools\MSVC\$version"
+    if ($properties.VCToolsVersion -ne $version -or
+        ([string]$properties.VCToolsInstallDir).TrimEnd('\', '/') -ne $expectedDirectory) {
+        throw "MSBuild must select MSVC $version from the validated Visual Studio installation."
+    }
+    $files = Get-MsvcTools $properties.VCToolsInstallDir -IncludeASan:$IncludeASan
+    if (-not $files) { throw "MSVC $version tool files are missing or incompatible." }
+    $manifestTool = Join-Path $properties.WindowsSdkDir "bin\$($properties.WindowsTargetPlatformVersion)\x64\mt.exe"
+    if (-not (Test-Path -LiteralPath $manifestTool -PathType Leaf)) {
+        throw "Windows SDK $($properties.WindowsTargetPlatformVersion) is missing its x64 manifest tool."
+    }
+    $symbolizer = if ($IncludeASan) { $files.Symbolizer }
     [pscustomobject]@{
         MSBuild = $msbuild
-        Dumpbin = Join-Path $bin 'dumpbin.exe'
-        Symbolizer = Join-Path $bin 'llvm-symbolizer.exe'
-        ManifestTool = Join-Path $properties.WindowsSdkDir "bin\$($properties.WindowsTargetPlatformVersion)\x64\mt.exe"
-        ToolsVersion = Split-Path -Leaf $properties.VCToolsInstallDir.TrimEnd('\')
+        Dumpbin = $files.Dumpbin
+        Symbolizer = $symbolizer
+        ManifestTool = $manifestTool
+        ToolsVersion = $version
+        ToolsetDirectory = $expectedDirectory
         SdkVersion = $properties.WindowsTargetPlatformVersion
+        CompilerVersion = $files.CompilerVersion
+        LinkerVersion = $files.LinkerVersion
+        DumpbinVersion = $files.DumpbinVersion
     }
 }
 
@@ -116,9 +132,7 @@ function Assert-BuildOutput {
     }
     Assert-ReleaseImage $product $Tools.Dumpbin
     Assert-RealTimeCode $product $Tools.Dumpbin
-    # Identify the audited binaries for local validation. The
-    # hashes are printed, not asserted: other toolsets legitimately differ.
-    Write-Output "Toolset: MSVC $($Tools.ToolsVersion), Windows SDK $($Tools.SdkVersion)"
+    # Identify the audited binaries for local validation.
     foreach ($binary in $binaries) {
         $hash = Get-FileHash -LiteralPath $binary -Algorithm SHA256
         Write-Output "SHA-256 $($hash.Hash)  $(Split-Path -Leaf $binary)"
@@ -163,13 +177,18 @@ if ($TestReleaseStartup -and $Configuration -eq 'Debug') {
 if (-not $CiWorker -or $Configuration -ne 'Debug') {
     & (Join-Path $PSScriptRoot 'check-project-layout.ps1')
 }
-$sanitizerComponents = @()
-if ($IncludeASan) {
-    $sanitizerComponents += 'Microsoft.VisualStudio.Component.VC.ASAN'
-}
 $solution = Join-Path $root 'WAV Player.sln'
 $project = Join-Path $root 'src\app\wavplay.vcxproj'
-$tools = Get-BuildTools (Find-VisualStudio $sanitizerComponents) $project
+$tools = Get-BuildTools (Find-VisualStudio -IncludeASan:$IncludeASan) $project -IncludeASan:$IncludeASan
+Write-Output "Toolset: MSVC $($tools.ToolsVersion), Windows SDK $($tools.SdkVersion)"
+Write-Output "MSVC files: cl=$($tools.CompilerVersion), link=$($tools.LinkerVersion), dumpbin=$($tools.DumpbinVersion)"
+if ($env:GITHUB_ACTIONS -eq 'true') {
+    $sourceCommit = Get-CheckedOutput 'git' @('-C', $root, 'rev-parse', 'HEAD')
+    if ($sourceCommit -cnotmatch '\A[0-9a-f]{40}\z' -or $sourceCommit -cne $env:GITHUB_SHA) {
+        throw 'The checkout does not match the GitHub Actions verification commit.'
+    }
+    Write-Output "Source commit: $sourceCommit"
+}
 
 $profiles = @($Configuration)
 if ($Configuration -eq 'All') {
@@ -195,7 +214,7 @@ if ($CiWorker) {
     $auditProfiles += 'Debug-ASan'
 }
 $clock.Start()
-Assert-BuildSettings $tools.MSBuild $projects (Join-Path $root 'src') $auditProfiles
+Assert-BuildSettings $tools $projects (Join-Path $root 'src') $auditProfiles
 Complete-Stage 'Settings'
 
 foreach ($buildProfile in $profiles) {

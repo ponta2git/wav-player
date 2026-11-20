@@ -31,6 +31,7 @@ scripts/ci.ps1
 scripts/export-source.ps1
 scripts/fetch-asio-sdk.ps1
 scripts/make-playlist.ps1
+scripts/prepare-ci-toolchain.ps1
 scripts/support/public-manifest.ps1
 scripts/support/staging.ps1
 scripts/support/visual-studio.ps1

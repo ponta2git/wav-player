@@ -173,7 +173,7 @@ function Test-Packaging {
     foreach ($directory in @('scripts/support', 'packaging/player', 'external/asiosdk/common', 'out/x64/Release')) {
         [void][IO.Directory]::CreateDirectory((Join-Path $buildFixture $directory))
     }
-    foreach ($relative in @('scripts/build.ps1', 'scripts/support/staging.ps1', 'scripts/support/visual-studio.ps1',
+    foreach ($relative in @('Directory.Build.props', 'scripts/build.ps1', 'scripts/support/staging.ps1', 'scripts/support/visual-studio.ps1',
         'scripts/fetch-asio-sdk.ps1', 'scripts/check-asio-drivers.ps1', 'scripts/make-playlist.ps1',
         'packaging/player/setup.cmd', 'packaging/player/setup.ps1', 'packaging/player/README.txt',
         'settings.example.ini', 'LICENSE')) {
@@ -184,6 +184,14 @@ function Test-Packaging {
     $mockVerify = Join-Path $buildFixture 'scripts/verify.ps1'
     $transferParent = Join-Path $work 'transfer'
     $transfer = Join-Path $transferParent 'player'
+
+    $props = Join-Path $buildFixture 'Directory.Build.props'
+    $originalProps = [IO.File]::ReadAllText($props)
+    Write-TestFile $props ($originalProps -replace '<WavplayMsvcVersion>[^<]+</WavplayMsvcVersion>',
+        '<WavplayMsvcVersion>14.99.99999</WavplayMsvcVersion>')
+    Assert-Fails { & (Join-Path $buildFixture 'scripts/build.ps1') -OutputDirectory $transfer } 'MSVC 14.99.99999'
+    Assert-True (-not (Test-Path -LiteralPath $transfer)) 'A missing toolset produced a transfer folder.'
+    Write-TestFile $props $originalProps
 
     Write-TestFile $mockVerify 'param([string]$Configuration) throw ''fixture verification failure'''
     Assert-Fails { & (Join-Path $buildFixture 'scripts/build.ps1') -OutputDirectory $transfer } 'fixture verification failure'

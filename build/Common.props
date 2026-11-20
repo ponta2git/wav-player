@@ -14,8 +14,7 @@
     <ClCompile>
       <AdditionalIncludeDirectories>$(RepoRoot)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
-      <!-- stdcpp23 emits /std:c++23preview, so the compiler enforces the C++23 ceiling
-           (_HAS_CXX26=0); move to /std:c++23 once the toolset accepts it. -->
+      <!-- VS 2026 18.12 maps stdcpp23 to /std:c++23 and enforces the C++23 ceiling. -->
       <LanguageStandard>stdcpp23</LanguageStandard>
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
@@ -83,6 +82,12 @@
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
     </ClCompile>
   </ItemDefinitionGroup>
+  <Target Name="CheckMsvcToolset" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(VCToolsVersion)' != '$(WavplayMsvcVersion)'"
+           Text="MSVC $(WavplayMsvcVersion) is required. Remove the VCToolsVersion override." />
+    <Error Condition="!Exists('$(VCToolsInstallDir)bin\Hostx64\x64\cl.exe')"
+           Text="MSVC $(WavplayMsvcVersion) is missing. Install the Visual Studio components in .vsconfig." />
+  </Target>
   <Target Name="CheckAsioSdk" BeforeTargets="PrepareForBuild">
     <Error Condition="!Exists('$(RepoRoot)external\asiosdk\common\iasiodrv.h')"
            Text="Extract Steinberg ASIO SDK 2.3.4 into external/asiosdk before building. See docs/dependencies.md." />

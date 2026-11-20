@@ -35,9 +35,9 @@ flowchart LR
 | PC | 必要なもの |
 |---|---|
 | 再生PC | Windows 11 25H2以降（x64）<br>AVX2・BMI1/BMI2・LZCNT・MOVBE・FMA・F16Cに対応するCPU<br>使用する機器のx64 ASIOドライバー |
-| ビルドPC | 再生PCと同じCPU条件（ビルド中に試験を実行するため）<br>Visual Studio 2026安定版のC++デスクトップ開発環境（MSVC v145、Windows SDK 10.0.26100.0） |
+| ビルドPC | 再生PCと同じCPU条件（ビルド中に試験を実行するため）<br>Visual Studio 2026安定版 18.12以降のC++デスクトップ開発環境（MSVC 14.52、Windows SDK 10.0.26100.0） |
 
-- Visual Studioに必要なコンポーネントは [.vsconfig](.vsconfig) に定義しています。
+- Visual Studio Installerで `.vsconfig` をインポートし、版指定のMSVC x64/x86ツールセット、Windows SDK、AddressSanitizerを用意してください。ビルドにはリポジトリで固定したMSVCの版を使います。[インストール構成](.vsconfig) · [ビルド設定](Directory.Build.props)
 - Steinberg ASIO SDK 2.3.4は、ビルド時に公式の配布元から取得します。[取得先・ハッシュ・ライセンス](docs/dependencies.md)
 - 製品はCRTを静的リンクするため、再生PCにVisual StudioやSDKは不要です。
 - 条件を満たさない環境では、起動時に理由を表示して終了します。
