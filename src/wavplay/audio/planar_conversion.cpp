@@ -585,7 +585,7 @@ __m128i load_twelve(const std::byte* source) noexcept
         _mm_cvtsi32_si128(load_le<std::int32_t>(source + 8)));
 }
 
-template<bool Mono, std::size_t SourceBytes>
+template<bool Mono, std::size_t SourceBytes, bool TwoFrames>
 Planes load_float_inputs(const std::byte* source) noexcept
 {
     if constexpr (SourceBytes == 2) {
@@ -604,7 +604,13 @@ Planes load_float_inputs(const std::byte* source) noexcept
         }
     } else {
         static_assert(SourceBytes == 4);
-        if constexpr (Mono) {
+        if constexpr (TwoFrames && Mono) {
+            const auto samples = _mm_cvtsi64_si128(load_le<std::int64_t>(source));
+            return {samples, samples};
+        } else if constexpr (TwoFrames) {
+            const auto separated = _mm_shuffle_epi32(load_le<__m128i>(source), _MM_SHUFFLE(3, 1, 2, 0));
+            return {_mm_unpacklo_epi64(separated, _mm_setzero_si128()), _mm_srli_si128(separated, 8)};
+        } else if constexpr (Mono) {
             const auto samples = load_le<__m128i>(source);
             return {samples, samples};
         } else {
@@ -619,13 +625,16 @@ template<bool Mono, std::size_t SourceBytes, bool FromFloat, std::size_t OutputB
 void to_float(const std::byte* source, std::size_t frames, std::byte* left, std::byte* right) noexcept
 {
     constexpr std::size_t frame_bytes = SourceBytes * (Mono ? 1 : 2);
+    // MSVC can merge adjacent stores of widened Float32 samples into a YMM store.
+    // Widen two samples per channel at a time to keep the store 128 bits wide.
+    constexpr std::size_t batch_frames = FromFloat ? 2 : 4;
     const auto store_words = [](std::byte* destination, const FloatWords& words) {
         store_le(destination, words.first);
-        if constexpr (OutputBytes == 8) { store_le(destination + 16, words.second); }
+        if constexpr (OutputBytes == 8 && !FromFloat) { store_le(destination + 16, words.second); }
     };
     std::size_t i = 0;
-    for (const auto simd_end = frames & ~std::size_t{3}; i < simd_end; i += 4) {
-        const auto samples = load_float_inputs<Mono, SourceBytes>(source + i * frame_bytes);
+    for (const auto simd_end = frames & ~(batch_frames - 1); i < simd_end; i += batch_frames) {
+        const auto samples = load_float_inputs<Mono, SourceBytes, FromFloat>(source + i * frame_bytes);
         const auto left_words = encode_float_words<FromFloat, SourceBytes, OutputBytes, BigEndian>(samples.left);
         store_words(left + i * OutputBytes, left_words);
         if constexpr (Mono) {
@@ -650,7 +659,7 @@ void to_float(const std::byte* source, std::size_t frames, std::byte* left, std:
             store_le(destination, BigEndian ? std::byteswap(bits) : bits);
         }
     };
-    for (auto n = frames & 3; n != 0; --n, ++i) {
+    for (; i < frames; ++i) {
         const auto* frame = source + i * frame_bytes;
         convert_sample(left + i * OutputBytes, frame);
         convert_sample(right + i * OutputBytes, frame + (Mono ? 0 : SourceBytes));

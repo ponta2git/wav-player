@@ -141,12 +141,13 @@ function Read-StartupImage {
 }
 
 # Walks a listing from the startup roots of Image through product code and
-# returns the violations (Failures) and the product functions it Walked. Index
-# is the function index of the listing (Get-DisassemblyFunctions).
+# returns the violations, product functions it walked and the first static
+# destructor registration for the self-check. Index is the listing's function index.
 function Test-StartupListing {
     param([string[]]$Lines, $Index, $Image)
     $failures = [Collections.Generic.List[string]]::new()
     $walked = [Collections.Generic.List[object]]::new()
+    $registration = $null
     $grammar = Get-DisassemblyGrammar
     $instructionLine = $grammar.InstructionLine
     $padding = $grammar.Padding
@@ -204,6 +205,8 @@ function Test-StartupListing {
             if ($operand -cmatch $addressOperand) {
                 $target = [Convert]::ToUInt64($operand, 16)
                 if ($target -ge $function.Start -and $target -le $function.End) { continue }
+            } elseif ($operand -cmatch $grammar.SymbolizedOperand) {
+                $target = Get-SymbolizedFunctionAddress $Index $Image.Base $Matches[1] $Matches[2]
             } elseif ($Index.ByName.ContainsKey($operand)) {
                 $target = $Index.Functions[$Index.ByName[$operand][-1]].Start
             } elseif ($Image.Names.ContainsKey($operand)) {
@@ -221,11 +224,26 @@ function Test-StartupListing {
                 if (-not $allowed.Count) { $failures.Add("unexpected CRT helper before the CPU gate in $at"); continue }
                 if (@($allowed | Where-Object Name -CEQ 'atexit').Count) {
                     # The constinit NoDestroy object's only dynamic work is the
-                    # compiler's lea rcx,[destructor]; jmp atexit. Any different
-                    # registration shape needs an explicit audit update.
-                    if ($i -le $function.First -or $Lines[$i - 1] -cnotmatch '^\s+[0-9A-F]{8,16}: lea\s+rcx,\[([0-9A-F]+)h\]\s*$') {
+                    # compiler's lea rcx,[destructor]; jmp atexit. Audit the
+                    # registered function through the linker map as another root.
+                    $destructor = $null
+                    if ($i -gt $function.First -and $Lines[$i - 1] -cmatch '^\s+([0-9A-F]{8,16}): lea\s+rcx,\[(.+)\]\s*$') {
+                        $leaAddress = $Matches[1]
+                        $referent = $Matches[2]
+                        if ($referent -cmatch '^([0-9A-F]{8,16})h$') {
+                            $destructor = [Convert]::ToUInt64($Matches[1], 16)
+                        } elseif ($referent -cmatch $grammar.SymbolizedOperand) {
+                            $destructor = Get-SymbolizedFunctionAddress $Index $Image.Base $Matches[1] $Matches[2]
+                        }
+                    }
+                    if ($null -eq $destructor -or -not $Index.ByAddress.ContainsKey($destructor) -or -not $Image.Symbols.ContainsKey($destructor)) {
                         $failures.Add("unresolved static destructor registration in $at")
-                    } else { $queue.Enqueue([Convert]::ToUInt64($Matches[1], 16)) }
+                    } else {
+                        $queue.Enqueue($destructor)
+                        if ($null -eq $registration) {
+                            $registration = @{ Line = $i - 1; LeaAddress = $leaAddress; Target = $destructor }
+                        }
+                    }
                 }
             }
             $queue.Enqueue([UInt64]$target)
@@ -237,7 +255,7 @@ function Test-StartupListing {
             $failures.Add("CPU gate function not audited: $name")
         }
     }
-    [pscustomobject]@{ Failures = $failures; Walked = $walked }
+    [pscustomobject]@{ Failures = $failures; Walked = $walked; Registration = $registration }
 }
 
 # Audits the startup code of Executable in its disassembly Lines with the
@@ -267,5 +285,20 @@ function Assert-StartupCode {
             throw "Startup audit self-check accepted $($probe.Instruction) in $($probe.Function.Name)"
         }
     }
-    Write-Output "Startup ISA audit: $($image.Roots.Count) CRT/TLS/entry roots; $($audit.Walked.Count) product functions stay on the SSE4.2 baseline; negative checks passed"
+    $registration = $audit.Registration
+    if ($null -eq $registration) { throw 'Startup audit self-check needs a static destructor registration.' }
+    $destructor = $Index.Functions[$Index.ByAddress[$registration.Target]]
+    $rva = $destructor.Start - $image.Base
+    $copy = [string[]]$Lines.Clone()
+    foreach ($operand in ('{0:X}h' -f $destructor.Start), ('{0} ({1:X8})' -f $destructor.Name, $rva)) {
+        $copy[$registration.Line] = '  {0}: lea rcx,[{1}]' -f $registration.LeaAddress, $operand
+        $result = Test-StartupListing $copy $Index $image
+        if ($result.Failures.Count) { throw "Startup audit self-check rejected a valid destructor address: $($result.Failures -join ' | ')" }
+    }
+    foreach ($operand in ('missing_destructor ({0:X8})' -f $rva), ('{0} (FFFFFFFF)' -f $destructor.Name)) {
+        $copy[$registration.Line] = '  {0}: lea rcx,[{1}]' -f $registration.LeaAddress, $operand
+        $result = Test-StartupListing $copy $Index $image
+        Assert-Rejected 'Startup ISA audit' $operand $result.Failures 'unresolved static destructor registration'
+    }
+    Write-Output "Startup ISA audit: $($image.Roots.Count) CRT/TLS/entry roots; $($audit.Walked.Count) product functions stay on the SSE4.2 baseline; self-checks passed"
 }

@@ -3,9 +3,9 @@
 # a Release disassembly (dumpbin /disasm:nobytes) against the callback rules
 # (docs/architecture.md, real-time boundary). With the PDB beside the
 # executable, dumpbin labels every function and prints a direct target as the
-# same decorated name or as an address. The walk starts at the callback entry
-# points, follows direct calls and jumps through product code, whatever was
-# inlined, and fails on forbidden constructs, on functions of the GUI-side
+# same name, as an address or as a name with an RVA. The walk starts at the
+# callback entry points, follows direct calls and jumps through product code
+# regardless of inlining, and fails on forbidden constructs, on functions of the GUI-side
 # layers and on lines it cannot read rather than on a particular code shape.
 # The steady refill walk uses the same listing and checks only instruction
 # width. Spin waits and semantic changes stay invisible to these audits.
@@ -21,12 +21,15 @@ function Get-WideInstruction {
 # Resolve a direct branch in either walk. Local jumps belong to the function
 # already being scanned. Internal-linkage callees can appear as addresses.
 function Get-DirectBranchTargets {
-    param($Index, [int]$Current, [string]$Operand, [string]$AddressOperand)
-    if ($Operand -cmatch $AddressOperand) {
+    param($Index, [int]$Current, [string]$Operand, $Grammar, [UInt64]$ImageBase)
+    if ($Operand -cmatch $Grammar.AddressOperand) {
         $target = [Convert]::ToUInt64($Operand, 16)
         $function = $Index.Functions[$Current]
         if ($target -ge $function.Start -and $target -le $function.End) { return $Current }
         if ($Index.ByAddress.ContainsKey($target)) { return $Index.ByAddress[$target] }
+    } elseif ($Operand -cmatch $Grammar.SymbolizedOperand) {
+        $target = Get-SymbolizedFunctionAddress $Index $ImageBase $Matches[1] $Matches[2]
+        if ($null -ne $target) { return $Index.ByAddress[$target] }
     } elseif ($Index.ByName.ContainsKey($Operand)) {
         return $Index.ByName[$Operand]
     }
@@ -82,7 +85,6 @@ function Test-RealTimeListing {
     $padding = $grammar.Padding
     $instruction = $grammar.Instruction
     $importOperand = $grammar.ImportOperand
-    $addressOperand = $grammar.AddressOperand
     $product = '@wavplay@@|^`?wavplay::'
     # The GUI, settings and playlist layers, optimized for size (build/WavplaySources.props), never
     # run in a callback. The rule reads function labels only: code inlined into a callback function
@@ -191,11 +193,11 @@ function Test-RealTimeListing {
                     continue
                 }
             }
-            if ($operands -cmatch $register -or $operands -cmatch '\[') {
+            if ($operands -cmatch $register -or ($operands -cmatch '\[' -and $operands -cnotmatch $grammar.SymbolizedOperand)) {
                 $failures.Add("indirect call or jump in $at")
                 continue
             }
-            $targets = @(Get-DirectBranchTargets $index $current $operands $addressOperand)
+            $targets = @(Get-DirectBranchTargets $index $current $operands $grammar $ImageBase)
             if (-not $targets.Count) {
                 $failures.Add("unknown branch target in $at")
             }
@@ -230,7 +232,7 @@ function Test-RealTimeListing {
 # Walk steady refill code from fill_slots and the indirectly selected kernels.
 # The producer's outer loop and the track transition are reporting boundaries.
 function Test-RefillListing {
-    param([string[]]$Lines, $Index)
+    param([string[]]$Lines, $Index, [UInt64]$ImageBase)
     $audit = [pscustomobject]@{
         Failures = [Collections.Generic.List[string]]::new(); Summary = [Collections.Generic.List[string]]::new()
         FillEntry = -1; KernelEntry = -1
@@ -283,9 +285,10 @@ function Test-RefillListing {
                 $audit.Failures.Add("256-bit instruction in $($function.Name) at $($Lines[$i].Trim())")
             }
             if ($mnemonic -cne 'call' -and $mnemonic -cnotlike 'j*') { continue }
-            if ($operand -cmatch '\[') { continue } # Imports and other indirect calls.
-            $targets = @(Get-DirectBranchTargets $Index $current $operand $grammar.AddressOperand)
-            if (-not $targets.Count -and ($operand -cmatch $product -or $operand -cmatch $grammar.AddressOperand)) {
+            $symbolized = $operand -cmatch $grammar.SymbolizedOperand
+            if (-not $symbolized -and $operand -cmatch '\[') { continue } # Imports and other indirect calls.
+            $targets = @(Get-DirectBranchTargets $Index $current $operand $grammar $ImageBase)
+            if (-not $targets.Count -and ($symbolized -or $operand -cmatch $product -or $operand -cmatch $grammar.AddressOperand)) {
                 $audit.Failures.Add("unresolved direct branch in $($function.Name) at $($Lines[$i].Trim())")
             }
             foreach ($target in $targets) {
@@ -307,13 +310,16 @@ function Test-RefillListing {
 }
 
 function Assert-RefillSelfCheck {
-    param([string[]]$Lines, $Audit)
+    param([string[]]$Lines, [UInt64]$ImageBase, $Audit)
     foreach ($entry in $Audit.FillEntry, $Audit.KernelEntry) {
         $altered = Add-ListingInstruction $Lines $entry 'vmovdqu     ymm0,ymmword ptr [rcx]'
-        $result = Test-RefillListing $altered (Get-DisassemblyFunctions $altered)
+        $result = Test-RefillListing $altered (Get-DisassemblyFunctions $altered) $ImageBase
         Assert-Rejected 'Refill audit' "a ymm move at $($Lines[$entry].Trim())" $result.Failures '256-bit instruction in '
     }
-    Write-Output 'Refill audit self-check: 2 altered listings rejected'
+    $altered = Add-ListingInstruction $Lines $Audit.FillEntry 'call        missing_callee (FFFFFFFF)'
+    $result = Test-RefillListing $altered (Get-DisassemblyFunctions $altered) $ImageBase
+    Assert-Rejected 'Refill audit' 'a symbolized call outside the listing' $result.Failures 'unresolved direct branch'
+    Write-Output 'Refill audit self-check: 3 altered listings rejected'
 }
 
 # Release defines NDEBUG (build/Common.props), so product asserts check only in
@@ -335,7 +341,7 @@ function Test-CrtAssert {
 # listing without them is never taken as clean.
 function Test-CrtRoutines {
     param([string[]]$Lines)
-    $instructionLine = (Get-DisassemblyGrammar).InstructionLine
+    $grammar = Get-DisassemblyGrammar
     $stdio = '\b(?:fputs|fputws|fwrite|fputc|fputwc|putc|putwc|puts|_putws|__stdio_common_vfw?printf\w*)\b'
     # The function's own namespace, not a parameter type that names it.
     $audio = '^\?(?:[^@?]+@|\?A0x[0-9a-f]+@)+audio@wavplay@@|^`?wavplay::audio::'
@@ -351,12 +357,16 @@ function Test-CrtRoutines {
             if ($inAudio) {
                 ++$result.Audio
             }
-        } elseif ($inAudio -and $Lines[$i] -cmatch $instructionLine) {
+        } elseif ($inAudio -and $Lines[$i] -cmatch $grammar.InstructionLine) {
             if ($result.First -lt 0) {
                 $result.First = $i
             }
-            if ($Matches[2] -cmatch '^(?:call|j\w+)\s+(?:memcpy|memmove|memset)$') {
-                $result.Copies.Add("${function}: $($Lines[$i].Trim())")
+            if ($Matches[2] -cmatch '^(?:call|j\w+)\s+(.*)$') {
+                $target = $Matches[1]
+                if ($target -cmatch $grammar.SymbolizedOperand) { $target = $Matches[1] }
+                if ($target -cin 'memcpy', 'memmove', 'memset') {
+                    $result.Copies.Add("${function}: $($Lines[$i].Trim())")
+                }
             }
         }
     }
@@ -384,6 +394,11 @@ function Assert-RealTimeSelfCheck {
     $functions = $Audit.Index.Functions
     $switchBuffer = $functions[$Audit.Roots[0]] # switch_buffer, the first root searched.
     $entry = $switchBuffer.First
+    $target = $functions[$Audit.Roots[1]]
+    $symbolizedCall = 'call {0} ({1:X8})' -f $target.Name, ($target.Start - $ImageBase)
+    $altered = Add-ListingInstruction $Lines $entry $symbolizedCall
+    $result = Test-RealTimeListing $altered $ImageBase
+    if ($result.Failures.Count) { throw "Real-time audit self-check rejected a matching symbol and RVA: $($result.Failures -join ' | ')" }
     # Renames a function's label and every use of its name.
     $rename = {
         param([string]$Name, [string]$NewName)
@@ -410,6 +425,8 @@ function Assert-RealTimeSelfCheck {
         @{ Case = 'a CPU-level read'; Expect = $isa; Insert = 'cmp         dword ptr [__isa_available],2' }
         @{ Case = 'a CRT call'; Expect = 'call or jump to memcpy in '; Insert = 'call        memcpy' }
         @{ Case = 'an unknown callee'; Expect = 'unknown branch target in '; Insert = 'call        ?missing@@YAXXZ' }
+        @{ Case = 'a symbol and its wrong RVA'; Expect = 'unknown branch target in '
+            Insert = 'call {0} ({1:X8})' -f $target.Name, ($switchBuffer.Start - $ImageBase) }
         @{ Case = 'a data line'; Expect = 'unreadable line in '; Insert = 'F0 0F B1 0D' }
         @{ Case = 'a renamed root'; Expect = "callback root switch_buffer not found"
             Lines = & $rename $switchBuffer.Name ($switchBuffer.Name -creplace 'switch_buffer', 'renamed_buffer') }
@@ -464,8 +481,10 @@ function Assert-NoCrtRoutines {
     if (-not @((Test-CrtRoutines (Add-ListingInstruction $Lines $Entry 'call        fputs')).Stdio).Count) {
         throw 'CRT routine audit self-check: an inserted call of fputs was not rejected.'
     }
-    if (-not (Test-CrtRoutines (Add-ListingInstruction $Lines $routines.First 'call        memcpy')).Copies.Count) {
-        throw 'CRT routine audit self-check: a call of memcpy inserted into a wavplay::audio function was not rejected.'
+    foreach ($call in 'call        memcpy', 'call        memcpy (00001000)') {
+        if (-not (Test-CrtRoutines (Add-ListingInstruction $Lines $routines.First $call)).Copies.Count) {
+            throw "CRT routine audit self-check: an inserted $call in a wavplay::audio function was not rejected."
+        }
     }
     Write-Output "CRT routine audit: no stdio output, and no memcpy, memmove or memset call in $($routines.Audio) wavplay::audio functions; inserted calls were rejected"
 }
@@ -482,13 +501,13 @@ function Assert-RealTimeCode {
     if ($audit.Failures.Count) {
         throw "Real-time audit of $Executable failed against the callback rules in docs/architecture.md:`n$($audit.Failures -join "`n")"
     }
-    $refill = Test-RefillListing $lines $audit.Index
+    $refill = Test-RefillListing $lines $audit.Index $base
     $refill.Summary | ForEach-Object { Write-Output $_ }
     if ($refill.Failures.Count) {
         throw "Refill audit of $Executable failed:`n$($refill.Failures -join "`n")"
     }
     Assert-RealTimeSelfCheck $lines $base $audit
-    Assert-RefillSelfCheck $lines $refill
+    Assert-RefillSelfCheck $lines $base $refill
     $entry = $audit.Index.Functions[$audit.Roots[0]].First # The first instruction of switch_buffer.
     Assert-NoCrtAssert $Executable $lines $entry
     Assert-NoCrtRoutines $Executable $lines $entry
