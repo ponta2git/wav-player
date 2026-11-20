@@ -622,7 +622,7 @@ void test_float_literals()
 void test_float64_group_mixes_zeros_and_subnormals()
 {
     // Only the subnormal lane is normalized. Every other lane, including
-    // signaling NaN payloads, keeps its fast-path encoding in the four-sample result.
+    // signaling NaN payloads, keeps its fast-path encoding throughout the input group.
     constexpr std::array groups{
         std::array<std::uint32_t, 4>{0x00000000, 0x80000000, 0x80000003, 0x3f800001},
         std::array<std::uint32_t, 4>{0x7f800001, 0xffc12345, 0x00000003, 0xff800000}};
