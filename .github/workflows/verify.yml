@@ -9,6 +9,10 @@ on:
         required: false
         type: boolean
         default: false
+      baseline_sha:
+        description: 'Full baseline commit SHA for the Release layout report (default: first parent)'
+        required: false
+        type: string
   pull_request:
   push:
     branches: [main]
@@ -28,14 +32,24 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        id: sources
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Prepare pinned MSVC toolchain
         shell: powershell
         run: .\scripts\prepare-ci-toolchain.ps1
       - name: Verify source and Release x64
+        id: release_check
         shell: powershell
         run: .\scripts\ci.ps1 ${{ github.event_name == 'workflow_dispatch' && inputs.release_only && '-ReleaseOnly' || '-Worker Release' }}
+      - name: Report Release layout changes
+        if: ${{ !cancelled() && steps.sources.outcome == 'success' }}
+        continue-on-error: true
+        shell: powershell
+        env:
+          WAVPLAY_RELEASE_OUTCOME: ${{ steps.release_check.outcome }}
+        run: .\scripts\ci-release-layout.ps1
 
   debug:
     name: Debug and AddressSanitizer x64

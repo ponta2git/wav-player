@@ -6,62 +6,7 @@
 # function before the gate, and every product static destructor, must stay
 # within the SSE4.2 baseline.
 
-# Reads the public symbols of a linker map.
-#   Symbols  address -> the symbols at it (Name, Address, Object); folded
-#            functions share one address.
-#   Names    name -> symbol.
-function Read-LinkerMap {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Startup audit needs the linker map beside the executable: $Path"
-    }
-    $symbols = @{}
-    $names = [hashtable]::new([StringComparer]::Ordinal)
-    foreach ($line in [IO.File]::ReadAllLines($Path)) {
-        if ($line -cmatch '^\s+[0-9A-Fa-f]{4}:[0-9A-Fa-f]{8}\s+(\S+)\s+([0-9A-Fa-f]{16})\s+(?:f\s+)?(?:i\s+)?(\S+)\s*$') {
-            $address = [Convert]::ToUInt64($Matches[2], 16)
-            $symbol = [pscustomobject]@{ Name = $Matches[1]; Address = $address; Object = $Matches[3] }
-            if (-not $symbols.ContainsKey($address)) { $symbols[$address] = @() }
-            $symbols[$address] += $symbol
-            $names[$symbol.Name] = $symbol
-        }
-    }
-    [pscustomobject]@{ Symbols = $symbols; Names = $names }
-}
-
-# Reads what the audit needs from the headers of an x64 PE32+ file: its Bytes,
-# the image Base, the size of the Headers, the Sections, and the addresses of
-# the entry point (EntryPoint) and of the TLS directory (TlsDirectory, 0 if none).
-function Read-PeImage {
-    param([string]$Executable)
-    $bytes = [IO.File]::ReadAllBytes($Executable)
-    $pe = [BitConverter]::ToInt32($bytes, 0x3c)
-    if ([BitConverter]::ToUInt32($bytes, $pe) -ne 0x4550 -or
-        [BitConverter]::ToUInt16($bytes, $pe + 4) -ne 0x8664) { throw 'Startup audit requires an x64 PE image.' }
-    $optional = $pe + 24
-    if ([BitConverter]::ToUInt16($bytes, $optional) -ne 0x20b) { throw 'Startup audit requires PE32+.' }
-    $base = [BitConverter]::ToUInt64($bytes, $optional + 24)
-    $sectionStart = $optional + [BitConverter]::ToUInt16($bytes, $pe + 20)
-    $sections = @(for ($i = 0; $i -lt [BitConverter]::ToUInt16($bytes, $pe + 6); ++$i) {
-        $offset = $sectionStart + 40 * $i
-        [pscustomobject]@{
-            Rva = [BitConverter]::ToUInt32($bytes, $offset + 12)
-            VirtualSize = [BitConverter]::ToUInt32($bytes, $offset + 8)
-            Size = [BitConverter]::ToUInt32($bytes, $offset + 16)
-            Raw = [BitConverter]::ToUInt32($bytes, $offset + 20)
-        }
-    })
-    # Data directory 9 of the optional header is the IMAGE_TLS_DIRECTORY64.
-    $tlsRva = [BitConverter]::ToUInt32($bytes, $optional + 112 + 9 * 8)
-    [pscustomobject]@{
-        Bytes = $bytes
-        Base = $base
-        Headers = [BitConverter]::ToUInt32($bytes, $optional + 60)
-        Sections = $sections
-        EntryPoint = $base + [BitConverter]::ToUInt32($bytes, $optional + 16)
-        TlsDirectory = if ($tlsRva) { $base + $tlsRva } else { [UInt64]0 }
-    }
-}
+. (Join-Path $PSScriptRoot 'linked-image.ps1')
 
 # Returns the 64-bit value the loaded image holds at the virtual address Address.
 function Read-ImagePointer {
