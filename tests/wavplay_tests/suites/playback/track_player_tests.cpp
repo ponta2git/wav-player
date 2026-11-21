@@ -573,8 +573,7 @@ void test_read_failure_with_request(bool stop)
         }
     };
     auto done = start(driver, playback);
-    // Trigger the half-ring refill without spending one wall-clock sleep per
-    // audio block. About half of the two-second ring remains for the producer.
+    // Advance past the first refill threshold while PCM is still buffered.
     for (unsigned tick = 0; tick < 1004; ++tick) {
         driver.advance_dac_block();
     }

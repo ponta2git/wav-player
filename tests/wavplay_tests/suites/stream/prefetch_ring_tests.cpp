@@ -887,12 +887,12 @@ void check_streaming_producer_parks_until_stop()
 // the threshold pop. The pops start only once the producer is seen blocked in
 // that wait, so a correct ring passes whatever the scheduling; the 200 ms wait
 // before the threshold pop is only the window in which an early wake shows.
-void check_producer_wakes_at_threshold(std::size_t wakes_per_ring)
+void check_producer_wakes_at_threshold(std::optional<std::size_t> wakes_per_ring)
 {
     constexpr std::size_t width = 47;
     constexpr std::size_t total = 3 * block;
     const auto layout = stream::plan_ring_layout(stream::plan_block_shape(width, 2), total, 44100);
-    const auto wake_interval = layout.capacity / wakes_per_ring;
+    const auto wake_interval = layout.capacity / wakes_per_ring.value_or(8u);
     expect_true("the run streams through the ring", layout.total_blocks > layout.capacity);
     expect_true("pops precede the wake threshold", wake_interval >= 2);
     TempFile file;
@@ -905,11 +905,13 @@ void check_producer_wakes_at_threshold(std::size_t wakes_per_ring)
     }
     core::UniqueHandle producer;
     DWORD producer_id{};
-    stream::PrefetchRing ring([&] {
+    const auto prepare = [&] {
         producer = current_thread_handle();
         producer_id = GetCurrentThreadId();
         return stream::PrefetchRing::PreparedTracks{stream::retain_playable_track(path)};
-    }, width, audio::int16_le, 0, {}, wakes_per_ring);
+    };
+    auto ring = wakes_per_ring ? stream::PrefetchRing(prepare, width, audio::int16_le, 0, {}, *wakes_per_ring)
+                               : stream::PrefetchRing(prepare, width, audio::int16_le);
     // Construction returns once priming is signaled, possibly before the
     // producer reaches its wait for space. A pop before then would let it
     // refill without any wake. Past priming, that wait is the only one the
@@ -1365,6 +1367,8 @@ int wavplay_test::run_prefetch_ring_tests()
     // and these two cases name it before any other case builds such a ring.
     suite.run_timed("a run that exactly fills the ring joins its producer during construction", check_exactly_full_ring);
     suite.run_timed("a streaming run's producer keeps its last WAV until stop", check_streaming_producer_parks_until_stop);
+    suite.run_timed("default ring wakes the producer at one eighth of its capacity",
+        [] { check_producer_wakes_at_threshold(std::nullopt); });
     for (const auto wakes_per_ring : {2u, 4u, 8u}) {
         const auto name = "producer wakes at its threshold for " + std::to_string(wakes_per_ring) + " wakes per ring";
         suite.run_timed(name.c_str(), [wakes_per_ring] { check_producer_wakes_at_threshold(wakes_per_ring); });
