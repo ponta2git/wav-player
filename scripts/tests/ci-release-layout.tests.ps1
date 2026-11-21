@@ -16,6 +16,7 @@ $repo = Join-Path $work 'fixture repo'
 $runnerTemp = Join-Path $work 'runner temp'
 $summaryPath = Join-Path $work 'summary.md'
 $eventPath = Join-Path $work 'event.json'
+$stepOutput = Join-Path $work 'step-output'
 $releaseDir = Join-Path $repo 'out/x64/Release'
 $realCommand = (Get-Command Get-LayoutCommandOutput).ScriptBlock
 
@@ -89,6 +90,13 @@ function Test-LayoutEvents {
 function Test-LayoutRun([string]$Mode, [string]$Expected, [switch]$Fails) {
     function Find-VisualStudio { $work }
     function Get-LayoutCommandOutput([string]$Program, [string[]]$Arguments) {
+        # Model a post-checkout hook that fails after the switch updated HEAD.
+        if ($Program -ceq 'git' -and $Arguments -contains 'switch' -and
+            (($Mode -ceq 'switch-failure' -and $Arguments[-1] -ceq $baseSha) -or
+             ($Mode -ceq 'restore-failure' -and $Arguments[-1] -ceq $candidateSha))) {
+            $null = & $realCommand $Program $Arguments
+            throw 'PRIVATE_FIXTURE_SWITCH'
+        }
         if ([IO.Path]::GetFileName($Program) -ine 'MSBuild.exe') { return & $realCommand $Program $Arguments }
         $version = [IO.File]::ReadAllText((Join-Path $repo 'version'))
         $baseOption = $Arguments -like '/p:BaseOutputPath=*'
@@ -97,7 +105,7 @@ function Test-LayoutRun([string]$Mode, [string]$Expected, [switch]$Fails) {
         if ($Arguments -like '/getProperty:*') {
             $toolset = if ($version -ceq 'baseline' -and $Mode -ceq 'mismatch') { 'older' } else { 'current' }
             return @{Properties=@{PlatformToolset='v145';VCToolsVersion=$toolset;VCToolsInstallDir='compiler';
-                WindowsTargetPlatformVersion='10.0';WindowsSdkDir='sdk';OutDir=$built;IntDir=(Join-Path $baseOutput 'obj')}} | ConvertTo-Json
+                WindowsTargetPlatformVersion='10.0';WindowsSdkDir='sdk';OutDir=($built + '\');IntDir=(Join-Path $baseOutput 'obj')}} | ConvertTo-Json
         }
         Assert-True ($version -ceq 'baseline' -and $Arguments -contains '/t:Rebuild' -and $baseOption) 'Baseline needs a fresh rebuild.'
         Assert-True ($Arguments[0] -eq (Join-Path $repo 'src/app/wavplay.vcxproj')) 'The product must build from the original absolute path.'
@@ -117,14 +125,16 @@ function Test-LayoutRun([string]$Mode, [string]$Expected, [switch]$Fails) {
     $verification = if ($Mode -ceq 'no-release') { 'failure' } else { 'success' }
     Write-TestFile $eventPath (@{before=$before} | ConvertTo-Json)
     Write-TestFile $summaryPath ''
+    Write-TestFile $stepOutput ''
     $publicLog = [Collections.Generic.List[string]]::new()
     $run = {
-        Invoke-ReleaseLayoutReport $repo $runnerTemp $summaryPath 'push' $eventPath $candidateSha $verification |
+        Invoke-ReleaseLayoutReport $repo $runnerTemp $summaryPath 'push' $eventPath $candidateSha $verification $stepOutput |
             ForEach-Object { $publicLog.Add([string]$_) }
     }
     if ($Fails) { Assert-Fails $run 'Release layout comparison failed' } else { & $run }
     $status = if ($Fails) { 'failed' } elseif ($Expected -ceq '比較済み') { 'compared' } else { 'skipped' }
     Assert-True ($publicLog.Count -eq 1 -and $publicLog[0] -ceq "Release layout summary: $status") 'Unexpected public log.'
+    Assert-True ([IO.File]::ReadAllText($stepOutput) -ceq "summary_written=true`n") 'Missing or duplicate summary acknowledgement.'
     $text = [IO.File]::ReadAllText($summaryPath)
     Assert-True ($text.Contains($Expected)) "Expected summary state was missing for $Mode."
     Assert-True (-not $text.Contains('PRIVATE_FIXTURE') -and -not $text.Contains($work) -and $text.Contains($candidateSha)) 'Invalid public fields.'
@@ -152,6 +162,8 @@ try {
         Test-LayoutRun 'mismatch' '比較未実施（MSVCまたはWindows SDKの条件が異なる）'
         Test-LayoutRun 'sdk-mismatch' '比較未実施（ASIO SDKの一致を確認できない）'
         Test-LayoutRun 'fetch-failure' '比較失敗（基準コミットの取得）' -Fails
+        Test-LayoutRun 'switch-failure' '比較失敗（基準コミットの取得）' -Fails
+        Test-LayoutRun 'restore-failure' '比較失敗（候補コミットの復元）' -Fails
         Test-LayoutRun 'build-failure' '比較失敗（基準版のビルド）' -Fails
         Test-LayoutRun 'analysis-failure' '比較失敗（配置差分の解析）' -Fails
         Test-LayoutRun 'no-release' '比較未実施（候補版の検証未完了）'

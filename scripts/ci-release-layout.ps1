@@ -77,7 +77,8 @@ function Get-LayoutBuildSettings([string]$Root, [string]$Msbuild, [string[]]$Opt
                 throw 'Unexpected build destination.'
             }
         }
-        if ($relative -eq 'src/app/wavplay.vcxproj') { $productDir = $values.OutDir }
+        # A native PS 5.1 child can misread a quoted argument ending in a backslash.
+        if ($relative -eq 'src/app/wavplay.vcxproj') { $productDir = [IO.Path]::GetFullPath($values.OutDir).TrimEnd('\', '/') }
         foreach ($name in 'PlatformToolset', 'VCToolsVersion', 'VCToolsInstallDir', 'WindowsTargetPlatformVersion', 'WindowsSdkDir') {
             if ([string]::IsNullOrWhiteSpace($values.$name)) { throw 'Unknown effective toolchain.' }
             $values.$name
@@ -138,9 +139,64 @@ function Get-LayoutSummaryTable($Summary) {
     }
 }
 
+# The only operation that changes the checkout. Once switched, every exit
+# restores the candidate before its comparison tool is invoked.
+function Invoke-LayoutBaselineBuild {
+    param([string]$Root, [string]$Baseline, [string]$Candidate, [string]$BuildRoot,
+        [string]$Msbuild, [string[]]$Options, [string]$Toolchain, $AsioSource)
+    $build = [pscustomobject]@{ Directory = $null; SkipReason = $null; FailedStage = $null }
+    $stage = '基準コミットの取得'
+    try {
+        $branch = Get-LayoutCommandOutput git @('-C', $Root, 'rev-parse', '--abbrev-ref', 'HEAD')
+        try { $type = Get-LayoutCommandOutput git @('-C', $Root, 'cat-file', '-t', $Baseline) } catch {
+            # For example, a force-push's previous tip may have no ref.
+            $null = Get-LayoutCommandOutput git @('-C', $Root, 'fetch', '--no-tags', '--depth=1', 'origin', $Baseline)
+            $type = Get-LayoutCommandOutput git @('-C', $Root, 'cat-file', '-t', $Baseline)
+        }
+        if ($type -cne 'commit') { throw 'Expected a commit.' }
+        try {
+            $null = Get-LayoutCommandOutput git @('-C', $Root, 'switch', '--quiet', '--detach', $Baseline)
+            $stage = 'ビルド条件の確認'
+            if (-not (Test-LayoutAsioSource (Get-LayoutAsioSource $Root) $AsioSource)) {
+                $build.SkipReason = 'ASIO SDKの一致を確認できない'
+                return $build
+            }
+            # A fresh intermediate tree retains the absolute source path. End
+            # the native property argument with '/' so PS 5.1 can quote spaces.
+            $buildOptions = $Options + "/p:BaseOutputPath=$BuildRoot/"
+            $old = Get-LayoutBuildSettings $Root $Msbuild $buildOptions $BuildRoot
+            if ($old.Toolchain -ne $Toolchain) {
+                $build.SkipReason = 'MSVCまたはWindows SDKの条件が異なる'
+                return $build
+            }
+            $stage = '基準版のビルド'
+            $project = Join-Path $Root 'src/app/wavplay.vcxproj'
+            $null = Get-LayoutCommandOutput $Msbuild (@($project, '/nologo', '/verbosity:quiet', '/t:Rebuild', '/m') + $buildOptions)
+            $build.Directory = $old.ProductDir
+        } finally {
+            try {
+                # A post-checkout hook can fail after HEAD has already changed.
+                $at = Get-LayoutCommandOutput git @('-C', $Root, 'rev-parse', 'HEAD')
+                $attached = Get-LayoutCommandOutput git @('-C', $Root, 'rev-parse', '--abbrev-ref', 'HEAD')
+                if ($at -cne $Candidate -or $attached -cne $branch) {
+                    if ($branch -ceq 'HEAD') {
+                        $null = Get-LayoutCommandOutput git @('-C', $Root, 'switch', '--quiet', '--detach', $Candidate)
+                    } else { $null = Get-LayoutCommandOutput git @('-C', $Root, 'switch', '--quiet', $branch) }
+                }
+                if ((Get-LayoutCommandOutput git @('-C', $Root, 'rev-parse', 'HEAD')) -cne $Candidate -or
+                    (Get-LayoutCommandOutput git @('-C', $Root, 'rev-parse', '--abbrev-ref', 'HEAD')) -cne $branch -or
+                    @(Get-LayoutCommandOutput git @('-C', $Root, 'status', '--porcelain')).Count) {
+                    throw 'Candidate checkout was not restored.'
+                }
+            } catch { $stage = '候補コミットの復元'; throw }
+        }
+    } catch { $build.FailedStage = $stage }
+    $build
+}
+
 function Invoke-ReleaseLayoutReport {
     param([string]$Root, [string]$TempRoot, [string]$SummaryPath, [string]$EventName,
-        [string]$EventPath, [string]$CandidateSha, [string]$ReleaseOutcome)
+        [string]$EventPath, [string]$CandidateSha, [string]$ReleaseOutcome, [string]$StepOutput)
 
     $baseline = $null
     $candidate = $null
@@ -159,7 +215,6 @@ function Invoke-ReleaseLayoutReport {
         $head = Get-LayoutCommandOutput git @('-C', $Root, 'rev-parse', 'HEAD')
         $changes = @(Get-LayoutCommandOutput git @('-C', $Root, 'status', '--porcelain'))
         if ($head -cne $candidate -or $changes.Count) { throw 'The checkout must match the verified commit.' }
-        $branch = Get-LayoutCommandOutput git @('-C', $Root, 'rev-parse', '--abbrev-ref', 'HEAD')
         $msbuild = Join-Path (Find-VisualStudio) 'MSBuild/Current/Bin/amd64/MSBuild.exe'
         $options = @('/p:Platform=x64', '/p:Configuration=Release')
         $diagnostic = $EventName -ceq 'workflow_dispatch' -and $eventData.inputs.PSObject.Properties['release_only'] -and
@@ -176,43 +231,11 @@ function Invoke-ReleaseLayoutReport {
 
         $baselineDir = $candidateDir
         if ($baseline -cne $candidate) {
-            $stage = '基準コミットの取得'
-            try { $type = Get-LayoutCommandOutput git @('-C', $Root, 'cat-file', '-t', $baseline) } catch {
-                # For example, a force-push's previous tip may have no ref.
-                $null = Get-LayoutCommandOutput git @('-C', $Root, 'fetch', '--no-tags', '--depth=1', 'origin', $baseline)
-                $type = Get-LayoutCommandOutput git @('-C', $Root, 'cat-file', '-t', $baseline)
-            }
-            if ($type -cne 'commit') { throw 'Expected a commit.' }
-            $null = Get-LayoutCommandOutput git @('-C', $Root, 'switch', '--quiet', '--detach', $baseline)
-            try {
-                $stage = 'ビルド条件の確認'
-                if (-not (Test-LayoutAsioSource (Get-LayoutAsioSource $Root) $asioSource)) {
-                    $result = '比較未実施（ASIO SDKの一致を確認できない）'
-                    return
-                }
-                $buildRoot = Join-Path $staging 'build'
-                # Use a fresh output and intermediate tree, retaining the same absolute source path.
-                # A forward slash also survives PS 5.1's native quoting of a path with spaces.
-                $buildOptions = $options + "/p:BaseOutputPath=$buildRoot/"
-                $old = Get-LayoutBuildSettings $Root $msbuild $buildOptions $buildRoot
-                if ($old.Toolchain -ne $current.Toolchain) {
-                    $result = '比較未実施（MSVCまたはWindows SDKの条件が異なる）'
-                    return
-                }
-                $stage = '基準版のビルド'
-                $project = Join-Path $Root 'src/app/wavplay.vcxproj'
-                $null = Get-LayoutCommandOutput $msbuild (@($project, '/nologo', '/verbosity:quiet', '/t:Rebuild', '/m') + $buildOptions)
-                $baselineDir = $old.ProductDir
-            } finally {
-                try {
-                    if ($branch -ceq 'HEAD') {
-                        $null = Get-LayoutCommandOutput git @('-C', $Root, 'switch', '--quiet', '--detach', $candidate)
-                    } else { $null = Get-LayoutCommandOutput git @('-C', $Root, 'switch', '--quiet', $branch) }
-                    if ((Get-LayoutCommandOutput git @('-C', $Root, 'rev-parse', 'HEAD')) -cne $candidate) {
-                        throw 'Candidate checkout was not restored.'
-                    }
-                } catch { $stage = '候補コミットの復元'; throw }
-            }
+            $build = Invoke-LayoutBaselineBuild -Root $Root -Baseline $baseline -Candidate $candidate -BuildRoot (Join-Path $staging 'build') `
+                -Msbuild $msbuild -Options $options -Toolchain $current.Toolchain -AsioSource $asioSource
+            if ($build.FailedStage) { $stage = $build.FailedStage; throw 'Baseline preparation failed.' }
+            if ($build.SkipReason) { $result = '比較未実施（' + $build.SkipReason + '）'; return }
+            $baselineDir = $build.Directory
         }
         $stage = '配置差分の解析'
         $report = Join-Path $staging 'report.json'
@@ -235,6 +258,9 @@ function Invoke-ReleaseLayoutReport {
         $lines += ''
         $lines += $details
         [IO.File]::AppendAllText($SummaryPath, ($lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+        if ($StepOutput) {
+            [IO.File]::AppendAllText($StepOutput, "summary_written=true`n", [Text.UTF8Encoding]::new($false))
+        }
         Write-Output "Release layout summary: $status"
     }
     if ($status -ceq 'failed') { throw 'Release layout comparison failed. See the job summary for the stage.' }
@@ -247,5 +273,5 @@ if ($MyInvocation.InvocationName -ne '.') {
     }
     $env:GIT_TERMINAL_PROMPT = '0'
     Invoke-ReleaseLayoutReport $env:GITHUB_WORKSPACE $env:RUNNER_TEMP $env:GITHUB_STEP_SUMMARY $env:GITHUB_EVENT_NAME `
-        $env:GITHUB_EVENT_PATH $env:GITHUB_SHA $env:WAVPLAY_RELEASE_OUTCOME
+        $env:GITHUB_EVENT_PATH $env:GITHUB_SHA $env:WAVPLAY_RELEASE_OUTCOME $env:GITHUB_OUTPUT
 }
