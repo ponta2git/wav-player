@@ -2,6 +2,7 @@
 #include "wavplay/asio/sample_types.h"
 #include "wavplay/audio/planar_conversion.h"
 #include "wavplay/core/win32.h"
+#include "wavplay/stream/prefetch_policy.h"
 #include "wavplay/stream/prefetch_ring.h"
 #include "fixtures/ring_fixture.h"
 #include "fixtures/wav_builder.h"
@@ -16,6 +17,7 @@
 #include <cstdio>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
@@ -175,14 +177,20 @@ void measure_prefetch(std::wstring_view input_name, std::wstring_view output_nam
 
 namespace {
 
-void measure_stream_condition(const MeasurementFormat& format, std::uint32_t rate, std::uint32_t width,
-    double cycles_per_us)
+struct StreamCondition { std::uint32_t rate, width; };
+constexpr StreamCondition stream_conditions[]{
+    {44100, 8}, {44100, 16}, {44100, 64}, {88200, 16}, {176400, 16}, {96000, 256}};
+constexpr std::uint32_t comparison_seconds = 30;
+
+void measure_stream_condition(const MeasurementFormat& format, StreamCondition condition,
+    double cycles_per_us, std::optional<std::size_t> wakes_per_ring)
 {
     using namespace wavplay_test;
     using namespace wavplay::stream;
     using Clock = std::chrono::steady_clock;
-    // Two seconds of priming plus roughly 22 half-second refills. End on a whole block.
-    constexpr std::uint64_t seconds = 13;
+    const auto [rate, width] = condition;
+    // The longer comparison gives the least frequent setting at least 20 refills.
+    const std::uint64_t seconds = wakes_per_ring ? comparison_seconds : 13;
     constexpr std::uint64_t ns_per_second = 1000000000;
     const auto blocks = seconds * rate / width;
     const auto frames = static_cast<std::uint32_t>(blocks * width);
@@ -194,11 +202,12 @@ void measure_stream_condition(const MeasurementFormat& format, std::uint32_t rat
     PrefetchRing ring([&] {
         producer_id = GetCurrentThreadId();
         return PrefetchRing::PreparedTracks{retain_playable_track(path)};
-    }, width, format.output);
+    }, width, format.output, 0, {}, wakes_per_ring.value_or(default_prefetch_policy.producer_wakes_per_ring));
     wavplay::core::UniqueHandle producer(OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, producer_id));
     if (!producer) { wavplay::core::throw_last_error("OpenThread"); }
     auto consumer = ring.consumer();
-    auto previous = sample(producer.get());
+    const auto primed = sample(producer.get());
+    auto previous = primed;
     std::optional<Counters> wake_start;
     std::vector<Counters> wakes;
     std::uint64_t consumed_blocks{}, consumed_frames{}, empty_count{};
@@ -251,26 +260,71 @@ void measure_stream_condition(const MeasurementFormat& format, std::uint32_t rat
     const auto reads = summarize(wakes, &Counters::reads);
     const auto cpu = summarize(wakes, &Counters::cycles);
     const auto bytes = summarize(wakes, &Counters::bytes);
-    std::printf("%7u %12u %5zu %9.1f %9llu %9llu %10.3f %10.3f %10.3f %12.0f %8llu %3u %5llu\n",
+    std::printf("%7u %12u %5zu %9.1f %9llu %9llu %10.3f %10.3f %10.3f %12.0f %8llu %3u %5llu",
         rate, width, wakes.size(), reads.median, reads.min, reads.max, cpu.median / cycles_per_us,
         static_cast<double>(cpu.min) / cycles_per_us, static_cast<double>(cpu.max) / cycles_per_us,
         bytes.median, consumed_frames, eof ? 1U : 0U, empty_count);
+    if (wakes_per_ring) {
+        const auto cpu_us = static_cast<double>(drained.cycles - primed.cycles) / cycles_per_us;
+        const auto audio_seconds = static_cast<double>(consumed_frames) / rate;
+        std::printf(" %12llu %12.3f %12.3f", bytes.max, cpu_us, cpu_us / audio_seconds);
+    }
+    std::putchar('\n');
     std::fflush(stdout);
 }
 
 } // namespace
 
-void measure_prefetch_stream(std::wstring_view input_name, std::wstring_view output_name)
+void measure_prefetch_stream(std::wstring_view input_name, std::wstring_view output_name,
+    std::optional<std::size_t> wakes_per_ring)
 {
-    struct Condition { std::uint32_t rate, width; };
-    constexpr Condition conditions[]{{44100, 8}, {44100, 16}, {44100, 64}, {88200, 16}, {176400, 16}, {96000, 256}};
-    const auto format = measurement_format(input_name, output_name, conditions[0].rate);
+    const auto format = measurement_format(input_name, output_name, stream_conditions[0].rate);
     const auto cycles_per_us = timestamp_cycles_per_us();
     std::printf("Paced stereo %s -> %s, Sleep(10), cached WAV, timestamp cycles/us=%.3f\n",
         format.input.label, wavplay::asio::sample_type_name(format.output_type), cycles_per_us);
     std::puts("CPU us approximate producer on-CPU time. Reads and source bytes are post-prime process I/O.");
-    std::puts("rate_hz block_frames wakes reads_med reads_min reads_max cpu_us_med cpu_us_min cpu_us_max source_B_med frames eof empty");
-    for (const auto [rate, width] : conditions) {
-        measure_stream_condition(format, rate, width, cycles_per_us);
+    if (wakes_per_ring) {
+        std::printf("Refill comparison: wakes_per_ring=%zu seconds=%u\n", *wakes_per_ring, comparison_seconds);
+    }
+    std::printf("rate_hz block_frames wakes reads_med reads_min reads_max cpu_us_med cpu_us_min cpu_us_max source_B_med frames eof empty%s\n",
+        wakes_per_ring ? " source_B_max cpu_us_total cpu_us_per_second" : "");
+    for (const auto condition : stream_conditions) {
+        measure_stream_condition(format, condition, cycles_per_us, wakes_per_ring);
+    }
+}
+
+void check_prefetch_pcm(std::wstring_view input_name, std::size_t wakes_per_ring)
+{
+    using namespace wavplay_test;
+    using namespace wavplay::stream;
+    if (input_name != L"pcm16" && input_name != L"pcm24") {
+        throw std::invalid_argument("Expected a PCM16 or PCM24 stereo ramp");
+    }
+    const auto format = measurement_format(input_name, L"ASIOSTInt32LSB", stream_conditions[0].rate);
+    const unsigned shift = 32U - format.input.sample.valid_bits;
+    std::printf("PCM check: %s -> ASIOSTInt32LSB wakes_per_ring=%zu\n", format.input.label, wakes_per_ring);
+    for (const auto [rate, width] : stream_conditions) {
+        const auto frames = comparison_seconds * rate / width * width;
+        TempFile file;
+        const auto* path = file.write(measurement_wave(format.input, rate, frames));
+        PrefetchRing ring([&] { return PrefetchRing::PreparedTracks{retain_playable_track(path)}; },
+            width, format.output, 0, {}, wakes_per_ring);
+        std::vector<std::uint32_t> left(width), right(width);
+        for (std::uint32_t first = 0; first < frames; first += width) {
+            const auto block = await_block(ring, left.data(), right.data());
+            const auto expected_status = first + width == frames ? BlockStatus::last : BlockStatus::ready;
+            if (block.status != expected_status || block.valid_frames != width) {
+                throw std::runtime_error("Unexpected block or EOF at frame " + std::to_string(first));
+            }
+            // The generated source uses the low 16/24 bits of the frame index on the
+            // left and its complement on the right. PCM32 output fills unused low bits with zero.
+            for (std::uint32_t index = 0; index < width; ++index) {
+                const auto frame = first + index;
+                if (left[index] != (frame << shift) || right[index] != (~frame << shift)) {
+                    throw std::runtime_error("Unexpected output PCM at frame " + std::to_string(frame));
+                }
+            }
+        }
+        std::printf("PASS rate_hz=%u block_frames=%u frames=%u eof=1\n", rate, width, frames);
     }
 }

@@ -887,13 +887,14 @@ void check_streaming_producer_parks_until_stop()
 // the threshold pop. The pops start only once the producer is seen blocked in
 // that wait, so a correct ring passes whatever the scheduling; the 200 ms wait
 // before the threshold pop is only the window in which an early wake shows.
-void check_producer_wakes_at_threshold()
+void check_producer_wakes_at_threshold(std::size_t wakes_per_ring)
 {
     constexpr std::size_t width = 47;
     constexpr std::size_t total = 3 * block;
     const auto layout = stream::plan_ring_layout(stream::plan_block_shape(width, 2), total, 44100);
+    const auto wake_interval = layout.capacity / wakes_per_ring;
     expect_true("the run streams through the ring", layout.total_blocks > layout.capacity);
-    expect_true("pops precede the wake threshold", layout.wake_interval >= 2);
+    expect_true("pops precede the wake threshold", wake_interval >= 2);
     TempFile file;
     const auto* path = file.write(wave({pcm16(2, 44100), pcm16_ramp(2, total)}));
     auto lock = open_lock_handle(path);
@@ -908,15 +909,15 @@ void check_producer_wakes_at_threshold()
         producer = current_thread_handle();
         producer_id = GetCurrentThreadId();
         return stream::PrefetchRing::PreparedTracks{stream::retain_playable_track(path)};
-    }, width, audio::int16_le);
+    }, width, audio::int16_le, 0, {}, wakes_per_ring);
     // Construction returns once priming is signaled, possibly before the
     // producer reaches its wait for space. A pop before then would let it
     // refill without any wake. Past priming, that wait is the only one the
     // producer requests itself, so a requested wait shows it blocked there.
     await_requested_wait(producer.get(), producer_id, "the primed producer waits for space before the first pop");
     std::array<std::uint16_t, width> left{}, right{};
-    for (std::size_t index = 0; index < layout.wake_interval; ++index) {
-        if (index + 1 == layout.wake_interval) {
+    for (std::size_t index = 0; index < wake_interval; ++index) {
+        if (index + 1 == wake_interval) {
             // An earlier wake would have let the producer read the locked frame and end.
             expect("the producer waits through the pops before the threshold",
                 WaitForSingleObject(producer.get(), 200), WAIT_TIMEOUT);
@@ -1048,6 +1049,11 @@ void check_track_inputs()
     // construction with its own exception.
     expect_throw<std::invalid_argument>("no track source", [] {
         stream::PrefetchRing ring(stream::PrefetchRing::PrepareTracks{}, block, audio::int16_le);
+    });
+    expect_throw<std::invalid_argument>("zero producer wakes per ring", [&] {
+        stream::PrefetchRing ring([&] {
+            return stream::PrefetchRing::PreparedTracks{stream::retain_playable_track(path)};
+        }, block, audio::int16_le, 0, {}, 0);
     });
     expect_throw<std::invalid_argument>("empty prepared run", [] {
         stream::PrefetchRing ring([] { return stream::PrefetchRing::PreparedTracks{}; }, block, audio::int16_le);
@@ -1359,7 +1365,10 @@ int wavplay_test::run_prefetch_ring_tests()
     // and these two cases name it before any other case builds such a ring.
     suite.run_timed("a run that exactly fills the ring joins its producer during construction", check_exactly_full_ring);
     suite.run_timed("a streaming run's producer keeps its last WAV until stop", check_streaming_producer_parks_until_stop);
-    suite.run_timed("the consumer wakes a waiting producer only at its wake threshold", check_producer_wakes_at_threshold);
+    for (const auto wakes_per_ring : {2u, 4u, 8u}) {
+        const auto name = "producer wakes at its threshold for " + std::to_string(wakes_per_ring) + " wakes per ring";
+        suite.run_timed(name.c_str(), [wakes_per_ring] { check_producer_wakes_at_threshold(wakes_per_ring); });
+    }
     suite.run_timed("playlist validation runs on the ring producer before priming", check_playlist_preparation_thread);
     suite.run_timed("the named producer prepares at the default speed and refills at reader_refill_speed",
         check_reader_thread_hints);

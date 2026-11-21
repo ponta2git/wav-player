@@ -38,12 +38,12 @@ static_assert(std::endian::native == std::endian::little);
     return std::bit_cast<PoppedBlock>(frames << 32 | std::to_underlying(status));
 }
 
-// The default policy with a ring's private metadata pages reserved inside the
-// same 16 MiB bound. The remaining plane budget is rounded down to whole pages,
-// so its eventual page rounding cannot exceed that bound.
-[[nodiscard]] PrefetchPolicy plane_policy(std::size_t metadata_bytes)
+// Reserve a ring's private metadata inside the 16 MiB budget. Round the
+// remaining plane budget down to whole pages so its allocation stays within it.
+[[nodiscard]] PrefetchPolicy plane_policy(std::size_t metadata_bytes, std::size_t producer_wakes_per_ring)
 {
     auto policy = default_prefetch_policy;
+    policy.producer_wakes_per_ring = producer_wakes_per_ring;
     if (metadata_bytes >= policy.ring_budget_bytes) {
         throw std::length_error("Prefetch metadata exhausts the ring budget");
     }
@@ -103,12 +103,10 @@ struct PrefetchRing::Impl {
 
     ~Impl() { stop(); }
 
-    void start(PrepareTracks prepare, std::uint64_t first_frame, std::size_t metadata_bytes,
+    void start(PrepareTracks prepare, std::uint64_t first_frame, const PrefetchPolicy& policy,
         const core::WakeHook& hook)
     {
-        // Set once, before the producer exists, which plans from its own copy.
-        // Revalidate even the largest block before a worker can open a file.
-        const auto policy = plane_policy(metadata_bytes);
+        // Revalidate even the largest block with metadata reserved before a worker can open a file.
         (void)plan_block_shape(block.frames, output.bytes(), policy);
         // The producer owns `prepare` and calls it once, before priming. What
         // it borrows from the caller stays valid: the constructor waits until
@@ -341,13 +339,14 @@ struct PrefetchRing::Impl {
 #pragma warning(pop)
 
 PrefetchRing::PrefetchRing(PrepareTracks prepare, std::size_t block_frames,
-    audio::SampleFormat output, std::uint64_t first_frame, core::WakeHook hook)
+    audio::SampleFormat output, std::uint64_t first_frame, core::WakeHook hook, std::size_t producer_wakes_per_ring)
     : impl_(block_frames, output)
 {
     if (!prepare) {
         throw std::invalid_argument("Playback requires a track source");
     }
-    impl_->start(std::move(prepare), first_frame, impl_.committed_size(), hook);
+    const auto policy = plane_policy(impl_.committed_size(), producer_wakes_per_ring);
+    impl_->start(std::move(prepare), first_frame, policy, hook);
 }
 
 PrefetchRing::~PrefetchRing() = default;

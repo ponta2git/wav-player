@@ -389,7 +389,7 @@ Windows x64の開発環境で、WAVの読み取りから再生制御までの受
 
 - 入力・操作
 
-  - 44.1 kHz・PCM16で幅47（容量1,877ブロック・起床の間隔469）の3秒の区間。初期充填の直後の最初の補充のフレームを `LockFile` で施錠し、準備の関数で生産者のスレッドのハンドルとIDを取る。構築から戻った後、`NtQuerySystemInformation(SystemProcessInformation)` の生産者のスレッドが自ら要求した待機（状態Waiting・理由UserRequest）になるまで照会する（最大5秒）。
+  - 44.1 kHz・PCM16で幅47、容量1,877ブロックの3秒の区間。1周2・4・8回の各条件で、通知間隔はそれぞれ938・469・234ブロック。初期充填の直後の最初の補充のフレームを `LockFile` で施錠し、準備の関数で生産者のスレッドのハンドルとIDを取る。構築から戻った後、`NtQuerySystemInformation(SystemProcessInformation)` の生産者のスレッドが自ら要求した待機（状態Waiting・理由UserRequest）になるまで照会する（最大5秒）。
   - それから間隔より1つ少ない回数だけpopし、閾値のpopを行う。
 
 - 合格条件
