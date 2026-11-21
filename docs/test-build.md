@@ -85,7 +85,7 @@ Windows x64の開発者とCIが[全検証](test-specification.md#ローカルと
 - 入力・操作
 
   - Releaseの `wavplay.exe` と隣のPDB。否定確認は、木の複製の `SegmentRenderer::render` に `OutputDebugStringW`・256 bit命令を生成する組み込み関数・AVX512の組み込み関数・可変長の `memcpy` を加え、または `silence` を `memset` に戻して `out\` 以外へ出力した検証用ビルドと、実際の逆アセンブルを書き換えた入力。
-  - いずれも `[Management.Automation.Language.Parser]::ParseFile` で `scripts/verify.ps1` から `Get-CheckedOutput` と `Assert-Rejected` の定義を取り出し、`scripts/verification/disassembly.ps1`・`realtime-code.ps1`・`startup-code.ps1` の関数定義を読み込む。
+  - いずれも `[Management.Automation.Language.Parser]::ParseFile` で `scripts/verify.ps1` から `Get-CheckedOutput` と `Assert-Rejected` の定義を取り出し、`scripts/verification/` の `disassembly.ps1`・`realtime-code.ps1`・`linked-image.ps1`・`startup-code.ps1` の関数定義を読み込む。
   - `Assert-RealTimeCode` に、PDBを隣に置いた実行ファイルと `dumpbin.exe` のパスを渡して監査する。書き換えた入力は、`/disasm:nobytes` の呼び出しにだけ用意した出力を返す `Get-CheckedOutput` を後から定義して与える。呼び出し先と入口を `wavplay::ui`・`wavplay::settings`・`wavplay::playlist` の装飾名・非装飾名へ改名した入力も与える。
 
 - 合格条件
@@ -153,6 +153,18 @@ CRTの表明・stdio・ブロック関数は前節の挿入例を拒否する。
 1. 同じコミット・ツールセット・SDK・ソース配置から、既存出力のない2つの一時ディレクトリへ `MSBuild src\app\wavplay.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:BaseOutputPath=<一時ディレクトリ>\` を実行し、`wavplay.exe` のSHA-256を比べる。
 2. `dumpbin /headers` のデバッグディレクトリは `cv` に `wavplay.pdb` だけを示し、`repro` の項目を持つ（`verify.ps1` の監査対象）。
 3. 通常のビルドで既存PDBへ再リンクすると、非増分リンクでもPDBの世代が進みハッシュが変わることがあるため、比べるのは再ビルドどうしとする。製品EXEの不一致は調査し、原因を説明せず再現性を認定しない。試験コードは `std::format` を使い、試験EXEの一致は製品EXEとは別に扱う。LTCGでは配置も生成コードに影響し得るため、異なるソース配置間のバイト一致をこの確認の条件にしない。
+
+### Release 2版の配置比較
+
+基準版と候補版のReleaseフォルダーに、それぞれ同じビルドの `wavplay.exe` と `wavplay.map` を用意する。対応する `wavplay.pdb` があれば同じ場所に置く。製品を起動せず、Windows PowerShell 5.1から次のように実行する。[配置比較コマンド](../scripts/compare-release-layout.ps1)
+
+```powershell
+.\scripts\compare-release-layout.ps1 -BaselineDir .\out\baseline -CandidateDir .\out\candidate -ReportPath .\out\layout.json
+```
+
+画面には主要関数と共有状態の移動量、JSONには両EXEのSHA-256、対応したシンボル、移動量が連続する範囲、命令とセクションの差を出す。位置は各イメージの先頭からの相対アドレス（RVA）、移動量は候補版から基準版を引いたバイト数。定数の集計はリンクマップの `__xmm@`・`__real@` シンボルを対象とし、詳細には所属オブジェクトも記録する。
+
+64バイト境界をまたぐ命令は、静的にたどれた範囲で関数内の位置を示す。再配置に伴う参照先の変位、命令や即値の変更、確定できない差を区別する。固定版の `dumpbin` がない環境では命令欄を `Unavailable` とし、配置とセクションの比較結果を保存する。セクションのバイト差は両版にある長さで数え、追加・削除されたバイト数を別に示す。EXEとMAPの取り違えなどの入力異常はエラーになる。
 
 ### 先読みの実測比較
 

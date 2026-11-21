@@ -148,13 +148,14 @@ function Test-IgnoreRules {
 # verify.ps1 also prints public and private diagnostics and can fail with 17.
 $ciStepsBeforeSetup = @('check-public-source.ps1', 'source-publication.tests.ps1', 'project-layout.tests.ps1',
     'fetch-asio-sdk.ps1', 'verify.ps1')
+$ciStepsAfterVerification = @('release-layout.tests.ps1', 'player-setup.tests.ps1')
 
 function New-CiFixture([string]$Name) {
     $ci = Join-Path $work $Name
     foreach ($relative in 'scripts/tests', 'logs') { [void][IO.Directory]::CreateDirectory((Join-Path $ci $relative)) }
     Copy-Item -LiteralPath (Join-Path $root 'scripts/ci.ps1') -Destination (Join-Path $ci 'scripts/ci.ps1')
     foreach ($name in 'check-public-source.ps1', 'fetch-asio-sdk.ps1', 'tests/source-publication.tests.ps1',
-        'tests/project-layout.tests.ps1', 'tests/player-setup.tests.ps1') {
+        'tests/project-layout.tests.ps1', 'tests/release-layout.tests.ps1', 'tests/player-setup.tests.ps1') {
         Write-TestFile (Join-Path $ci ('scripts/' + $name)) @'
 param([switch]$Tracked)
 $name = $MyInvocation.MyCommand.Name
@@ -274,7 +275,7 @@ function Test-CiFullVerification {
     }
     Assert-True (@($publicLines -clike 'TIMING *').Count -eq 5) 'A timing outside the stage and integer duration schema reached the public log.'
     Assert-NoPrivateDiagnostic $result $ci 'Successful CI'
-    Assert-CiSteps $ci ($ciStepsBeforeSetup + 'player-setup.tests.ps1')
+    Assert-CiSteps $ci ($ciStepsBeforeSetup + $ciStepsAfterVerification)
     Complete-TestGroup 'default CI forwards full verification and publishes only reconstructed diagnostics'
 }
 
@@ -301,7 +302,7 @@ function Test-CiWorkers {
         Assert-True ($arguments.Configuration -ceq $worker -and $arguments.CiWorker -and $arguments.Analyze) "$worker CI worker selected the wrong configuration or analysis."
         if ($worker -eq 'Release') {
             Assert-True ($arguments.TestReleaseStartup -and -not $arguments.IncludeASan) 'Release worker forwarded the wrong startup or ASan options.'
-            Assert-CiSteps $ci ($ciStepsBeforeSetup + 'player-setup.tests.ps1')
+            Assert-CiSteps $ci ($ciStepsBeforeSetup + $ciStepsAfterVerification)
         } else {
             Assert-True ($arguments.IncludeASan -and -not $arguments.TestReleaseStartup) 'Debug worker forwarded the wrong startup or ASan options.'
             Assert-CiSteps $ci @('fetch-asio-sdk.ps1', 'verify.ps1')

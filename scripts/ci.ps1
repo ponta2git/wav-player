@@ -128,6 +128,7 @@ $steps = @(
     @{ Name = 'SDK download and integrity'; File = 'fetch-asio-sdk.ps1'; Arguments = @() }
     $verification
     if ($Worker -ne 'Debug') {
+        @{ Name = 'Release layout comparison tests'; File = 'tests/release-layout.tests.ps1'; Arguments = @() }
         @{ Name = 'Player setup tests'; File = 'tests/player-setup.tests.ps1'; Arguments = @() }
     }
 )
