@@ -67,6 +67,14 @@ using wavplay::asio::activate_registered_driver;
 using wavplay_test::Suite;
 using Operands = std::span<wchar_t* const>;
 
+std::size_t parse_wakes_per_ring(std::wstring_view value)
+{
+    if (value == L"2") { return 2; }
+    if (value == L"4") { return 4; }
+    if (value == L"8") { return 8; }
+    throw std::invalid_argument("Expected 2, 4 or 8 refill wakes per ring");
+}
+
 std::chrono::milliseconds parse_control_delay(const wchar_t* text)
 {
     const std::wstring_view delay(text);
@@ -100,12 +108,17 @@ constexpr std::array commands{
             operands.size() == 2 ? std::wstring_view(operands[1]) : std::wstring_view{});
         return 0;
     }},
-    Command{L"--measure-prefetch-stream", " [pcm16|pcm24|pcm32|ext24in32|float32|extfloat32] [ASIOST...]", "Prefetch stream measurement", 0, 2, [](Operands operands) {
-        if (operands.size() == 2 && std::wstring_view(operands[1]).empty()) {
+    Command{L"--measure-prefetch-stream", " [pcm16|pcm24|pcm32|ext24in32|float32|extfloat32] [ASIOST...] [2|4|8]", "Prefetch stream measurement", 0, 3, [](Operands operands) {
+        if (operands.size() >= 2 && std::wstring_view(operands[1]).empty()) {
             throw std::invalid_argument("The prefetch output format must not be empty");
         }
         measure_prefetch_stream(operands.empty() ? L"pcm16" : std::wstring_view(operands[0]),
-            operands.size() == 2 ? std::wstring_view(operands[1]) : std::wstring_view{});
+            operands.size() >= 2 ? std::wstring_view(operands[1]) : std::wstring_view{},
+            operands.size() == 3 ? std::optional{parse_wakes_per_ring(operands[2])} : std::nullopt);
+        return 0;
+    }},
+    Command{L"--check-prefetch-pcm", " pcm16|pcm24 2|4|8", "Prefetch stream PCM check", 2, 2, [](Operands operands) {
+        check_prefetch_pcm(operands[0], parse_wakes_per_ring(operands[1]));
         return 0;
     }},
     Command{L"--probe-asio", " {CLSID}", "ASIO probe", 1, 1, [](Operands operands) {

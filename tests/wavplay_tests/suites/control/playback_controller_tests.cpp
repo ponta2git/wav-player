@@ -1702,8 +1702,7 @@ void test_read_error_cause()
         wavplay::core::throw_last_error("open read-error lock");
     }
     const wavplay::core::UniqueHandle lock(handle);
-    // 100 ms blocks: the two-second ring holds exactly the frames before the
-    // lock, and the first refill comes after half of it has been consumed.
+    // With 100 ms blocks, the two-second ring holds exactly the frames before the lock.
     const auto offset = wavplay::media::WavReader(path).info().data_offset + std::uint64_t{2} * rate * 4;
     if (!LockFile(lock.get(), static_cast<DWORD>(offset), 0, 4, 0)) {
         wavplay::core::throw_last_error("lock the first refill frame");

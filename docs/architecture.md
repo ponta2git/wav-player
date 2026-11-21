@@ -199,7 +199,7 @@ UI 自身が故障したら通常描画を終了する。`show_text` と `Playba
 |---|---|
 | `WavReader::staging_bytes` | 通常の `ReadFile` は最大8 KiB。読み込み側のスタックにキャッシュライン整列した作業領域を一つ置き、変換まで同期的に貸す |
 | `WavReader::validation_bytes` | 24/32 の全件検証だけは最大64 KiB。検証は同一レート区間の再生前に終える |
-| `stream::PrefetchPolicy` | 目標約2秒、左右の音声領域とリング専用管理ページの実コミット合計は16 MiB 以下。短い曲列は終端まで。通常はリング1周当たり約4回、生産者をイベントで起こす |
+| `stream::PrefetchPolicy` | 目標約2秒、左右の音声領域とリング専用管理ページの実コミット合計は16 MiB 以下。短い曲列は終端まで。補充通知の既定はリング1周当たり8回。リング生成時に容量を8で割り、切り捨てたブロック数（最小1）を通知間隔にする |
 | `GaplessRun::next_batch_blocks` | 現在曲の元データ8 KiB を目安に整数ブロック数（最小1）を準備時に求める。曲末を含むブロックで区切り、次の補充から新しい入力幅を使う |
 | `plan_block_shape` / `plan_ring_layout` | 桁あふれを防いでブロック幅・周回容量を計算する。予算内にステレオ2ブロックを置けない寸法は開始前に拒否 |
 
@@ -269,6 +269,6 @@ Release は上記の起動ガードを除く翻訳単位を `/GL` でコンパ�
 | `fixtures/`、`doubles/` | WAV 生成、製品変換に依存しない `sample_oracle`、ファイル・スレッドを止めるゲート、模擬 ASIO と停止時に未再生分を捨てる模擬 DAC |
 | `suites/<層>/` | 純粋変換と型は直接試す。`core` から `asio` の試験は再生層・コントローラー・GUI・再生用 fixture を直接取り込まず、`asio` より下位では模擬 ASIO も使わない |
 | `suites/playback/`、`control/`・`ui/` の試験群 | 一区間の音声と停止、異レートの機器呼び出し順、入力形式と出力型の時系列、操作番号と実ウィンドウの接続をそれぞれ試す |
-| `diagnostics/` | `--probe-asio`、`--probe-asio-rate-lifecycle`、`--audition-asio*`、`--measure-prefetch`。先読み測定は音源形式と ASIO 出力名を選べる。実機や測定の入口では製品と同様にイメージ固定を一度試みる |
+| `diagnostics/` | `--probe-asio`、`--probe-asio-rate-lifecycle`、`--audition-asio*`、`--measure-prefetch`。補充を測る `--measure-prefetch-stream` は入力形式・ASIO出力型・通知頻度を選べる。`--check-prefetch-pcm` は補充時の全PCMと終端を照合する。実機や測定の入口では製品と同様にイメージ固定を一度試みる |
 
 `scripts/verify.ps1` が構成ごとのビルド・静的解析・試験を実行する。`scripts/verification/` では `build-settings.ps1` が評価済み MSBuild 設定、`release-image.ps1` が PE・manifest・version、`realtime-code.ps1` がコールバックと補充の定常経路の機械語、`startup-code.ps1` が起動ガード前と拒否後の到達先を監査する。機械語の監査は、逆アセンブルの読み方を `disassembly.ps1` で共有する。PE・取り込み DLL・機械語の自己検査は違反を入れた入力の拒否も確認する。詳細なケースと環境は[試験仕様](test-specification.md)を参照する。

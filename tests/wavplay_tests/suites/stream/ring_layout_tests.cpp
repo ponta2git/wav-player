@@ -175,10 +175,8 @@ void test_wake_policies()
         PrefetchPolicy{.producer_wakes_per_ring = 2}), 12000, 18001, 3, 6000, true);
     expect_layout("four wakes per ring", plan_ring_layout(block, 144003, 48000,
         PrefetchPolicy{.producer_wakes_per_ring = 4}), 12000, 18001, 3, 3000, true);
-    const auto active = plan_ring_layout(block, 144003, 48000);
-    expect("default policy retains the two-second capacity", active.capacity, 12000);
-    expect_true("default policy wakes before the ring is empty",
-        active.wake_interval > 0 && active.wake_interval < active.capacity);
+    expect_layout("eight wakes per ring by default", plan_ring_layout(block, 144003, 48000),
+        12000, 18001, 3, 1500, true);
 }
 
 } // namespace
@@ -190,6 +188,6 @@ int wavplay_test::run_ring_layout_tests()
     suite.run("ring capacity, run blocks and wake interval", test_ring_layout);
     suite.run("ring dimensions reject invalid inputs and bound arithmetic", test_ring_layout_boundaries);
     suite.run("small channel payloads share one line without sharing different blocks", test_shared_line_layout);
-    suite.run("explicit refill policies and a safe configurable default", test_wake_policies);
+    suite.run("explicit refill policies and the default wake interval", test_wake_policies);
     return suite.result("Ring layout");
 }

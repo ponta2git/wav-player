@@ -21,7 +21,7 @@ struct PrefetchPolicy {
     // An oversized block or a block crossing tracks can require multiple reads.
     std::size_t batch_source_bytes = 8 * 1024;
     // Consumer notifications per ring capacity, waking a producer blocked on a full ring.
-    std::size_t producer_wakes_per_ring = 4;
+    std::size_t producer_wakes_per_ring = 8;
 };
 
 inline constexpr PrefetchPolicy default_prefetch_policy{};
