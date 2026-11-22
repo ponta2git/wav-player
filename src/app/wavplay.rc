@@ -4,7 +4,7 @@
 
 // The single product version. build/app.manifest's assemblyIdentity carries the
 // same value; change both together.
-#define WAVPLAY_VERSION(form) form(0, 1, 0, 0)
+#define WAVPLAY_VERSION(form) form(0, 2, 0, 0)
 #define WAVPLAY_VERSION_NUMBERS(major, minor, patch, build) major, minor, patch, build
 #define WAVPLAY_VERSION_TEXT(major, minor, patch, build) #major "." #minor "." #patch "." #build
 
