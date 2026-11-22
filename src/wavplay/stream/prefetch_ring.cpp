@@ -95,6 +95,8 @@ struct PrefetchRing::Impl {
     alignas(core::adjacent_line_pair) std::atomic<std::uint64_t> consumed{};
     std::size_t read_offset{};
     std::uint64_t next_wake{};
+    // Blocks from next_wake to the wake after it.
+    std::size_t following_wake_interval{};
 
     Impl(std::size_t frames, audio::SampleFormat format)
         : output(format), block(plan_block_shape(frames, output.bytes()))
@@ -261,7 +263,8 @@ struct PrefetchRing::Impl {
         // returns. No input remains here once produce finishes and parks.
         alignas(core::cache_line_size) std::array<std::byte, media::WavReader::staging_bytes> staging;
         layout = plan_ring_layout(block, run.frame_count(), info.format.sample_rate, policy);
-        next_wake = layout.wake_interval;
+        next_wake = layout.short_wake_interval();
+        following_wake_interval = layout.long_wake_interval();
         pages = core::PageAllocation(layout.allocation_bytes());
         const auto capacity = layout.capacity;
         const auto total_blocks = layout.total_blocks;
@@ -330,7 +333,9 @@ struct PrefetchRing::Impl {
         consumed.store(next, std::memory_order_release);
         if (next == next_wake && written < layout.total_blocks) {
             SetEvent(space_available.get());
-            next_wake += layout.wake_interval;
+            // Alternate the short and long intervals, which sum to two mean ones.
+            next_wake += following_wake_interval;
+            following_wake_interval = 2 * layout.wake_interval - following_wake_interval;
         }
         const bool last = next == layout.total_blocks;
         return last ? make_block(BlockStatus::last, layout.final_frames) : make_block(BlockStatus::ready, shape.frames);

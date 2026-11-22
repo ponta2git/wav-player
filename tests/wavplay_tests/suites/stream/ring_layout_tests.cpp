@@ -3,6 +3,7 @@
 #include "wavplay/core/memory.h"
 #include "wavplay/stream/ring_layout.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -179,6 +180,32 @@ void test_wake_policies()
         12000, 18001, 3, 1500, true);
 }
 
+// Expected intervals are mean - floor(mean / 4) and mean + floor(mean / 4),
+// written out here independently of the planner.
+void test_alternating_wake_intervals()
+{
+    struct Case {
+        std::size_t mean, shorter, longer;
+    };
+    constexpr std::array cases{Case{1, 1, 1}, Case{3, 3, 3}, Case{4, 3, 5}, Case{7, 6, 8}, Case{8, 6, 10},
+        Case{689, 517, 861}, Case{1500, 1125, 1875}, Case{3000, 2250, 3750}, Case{6000, 4500, 7500}};
+    for (const auto& test : cases) {
+        RingLayout layout{};
+        layout.wake_interval = test.mean;
+        const auto name = "mean wake interval " + std::to_string(test.mean);
+        expect(name + " short", layout.short_wake_interval(), test.shorter);
+        expect(name + " long", layout.long_wake_interval(), test.longer);
+    }
+    // 44.1 kHz with 16-frame 32-bit blocks: the two-second target needs 5,513
+    // slots, so eight alternating intervals end one block short of a full ring.
+    const auto layout = plan_ring_layout(plan_block_shape(16, 4), 30 * 44100, 44100);
+    expect("capacity of the two-second target", layout.capacity, 5513);
+    expect("mean interval of eight wakes per ring", layout.wake_interval, 689);
+    expect("first wake", layout.short_wake_interval(), 517);
+    expect("second wake", layout.short_wake_interval() + layout.long_wake_interval(), 1378);
+    expect("eighth wake", 4 * (layout.short_wake_interval() + layout.long_wake_interval()), 5512);
+}
+
 } // namespace
 
 int wavplay_test::run_ring_layout_tests()
@@ -189,5 +216,6 @@ int wavplay_test::run_ring_layout_tests()
     suite.run("ring dimensions reject invalid inputs and bound arithmetic", test_ring_layout_boundaries);
     suite.run("small channel payloads share one line without sharing different blocks", test_shared_line_layout);
     suite.run("explicit refill policies and the default wake interval", test_wake_policies);
+    suite.run("wakes alternate short and long intervals around the mean", test_alternating_wake_intervals);
     return suite.result("Ring layout");
 }

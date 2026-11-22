@@ -20,7 +20,8 @@ struct PrefetchPolicy {
     // matches media::WavReader::staging_bytes: an ordinary fill uses one ReadFile.
     // An oversized block or a block crossing tracks can require multiple reads.
     std::size_t batch_source_bytes = 8 * 1024;
-    // Consumer notifications per ring capacity, waking a producer blocked on a full ring.
+    // Mean consumer notifications per ring capacity, waking a producer blocked
+    // on a full ring. The planner turns it into alternating short and long intervals.
     std::size_t producer_wakes_per_ring = 8;
 };
 
