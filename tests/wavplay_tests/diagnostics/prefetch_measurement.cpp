@@ -182,8 +182,24 @@ constexpr StreamCondition stream_conditions[]{
     {44100, 8}, {44100, 16}, {44100, 64}, {88200, 16}, {176400, 16}, {96000, 256}};
 constexpr std::uint32_t comparison_seconds = 30;
 
+wavplay::stream::RefillPattern parse_refill_pattern(std::wstring_view name)
+{
+    using wavplay::stream::RefillPattern;
+    if (name == L"uniform") { return RefillPattern::uniform; }
+    if (name == L"alternating") { return RefillPattern::alternating; }
+    if (name == L"paired") { return RefillPattern::paired; }
+    throw std::invalid_argument("Expected uniform, alternating or paired refill pattern");
+}
+
+void print_stream_header(bool comparison)
+{
+    std::printf("rate_hz block_frames wakes reads_med reads_min reads_max cpu_us_med cpu_us_min cpu_us_max source_B_med frames eof empty%s\n",
+        comparison ? " source_B_max cpu_us_total cpu_us_per_second" : "");
+}
+
 void measure_stream_condition(const MeasurementFormat& format, StreamCondition condition,
-    double cycles_per_us, std::optional<std::size_t> wakes_per_ring)
+    double cycles_per_us, std::optional<std::size_t> wakes_per_ring,
+    wavplay::stream::RefillPattern pattern = wavplay::stream::RefillPattern::uniform)
 {
     using namespace wavplay_test;
     using namespace wavplay::stream;
@@ -202,7 +218,7 @@ void measure_stream_condition(const MeasurementFormat& format, StreamCondition c
     PrefetchRing ring([&] {
         producer_id = GetCurrentThreadId();
         return PrefetchRing::PreparedTracks{retain_playable_track(path)};
-    }, width, format.output, 0, {}, wakes_per_ring.value_or(default_prefetch_policy.producer_wakes_per_ring));
+    }, width, format.output, 0, {}, wakes_per_ring.value_or(default_prefetch_policy.producer_wakes_per_ring), pattern);
     wavplay::core::UniqueHandle producer(OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, producer_id));
     if (!producer) { wavplay::core::throw_last_error("OpenThread"); }
     auto consumer = ring.consumer();
@@ -286,29 +302,49 @@ void measure_prefetch_stream(std::wstring_view input_name, std::wstring_view out
     if (wakes_per_ring) {
         std::printf("Refill comparison: wakes_per_ring=%zu seconds=%u\n", *wakes_per_ring, comparison_seconds);
     }
-    std::printf("rate_hz block_frames wakes reads_med reads_min reads_max cpu_us_med cpu_us_min cpu_us_max source_B_med frames eof empty%s\n",
-        wakes_per_ring ? " source_B_max cpu_us_total cpu_us_per_second" : "");
+    print_stream_header(wakes_per_ring.has_value());
     for (const auto condition : stream_conditions) {
         measure_stream_condition(format, condition, cycles_per_us, wakes_per_ring);
     }
 }
 
-void check_prefetch_pcm(std::wstring_view input_name, std::size_t wakes_per_ring)
+void measure_refill_pattern(std::wstring_view pattern_name)
+{
+    const auto pattern = parse_refill_pattern(pattern_name);
+    constexpr StreamCondition condition{44100, 16};
+    const auto format = measurement_format(L"pcm24", L"ASIOSTInt32LSB", condition.rate);
+    const auto cycles_per_us = timestamp_cycles_per_us();
+    std::printf("PCM24 -> ASIOSTInt32LSB pattern=%.*ls wakes_per_ring=8 seconds=%u cycles_per_us=%.6f\n",
+        static_cast<int>(pattern_name.size()), pattern_name.data(), comparison_seconds, cycles_per_us);
+    print_stream_header(true);
+    measure_stream_condition(format, condition, cycles_per_us, 8, pattern);
+}
+
+void check_prefetch_pcm(std::wstring_view input_name, std::size_t wakes_per_ring,
+    std::optional<std::wstring_view> pattern_name)
 {
     using namespace wavplay_test;
     using namespace wavplay::stream;
     if (input_name != L"pcm16" && input_name != L"pcm24") {
         throw std::invalid_argument("Expected a PCM16 or PCM24 stereo ramp");
     }
+    const auto pattern = parse_refill_pattern(pattern_name.value_or(L"uniform"));
+    if (wakes_per_ring != 8 && pattern != RefillPattern::uniform) {
+        throw std::invalid_argument("Non-uniform refill patterns require eight wakes per ring");
+    }
     const auto format = measurement_format(input_name, L"ASIOSTInt32LSB", stream_conditions[0].rate);
     const unsigned shift = 32U - format.input.sample.valid_bits;
-    std::printf("PCM check: %s -> ASIOSTInt32LSB wakes_per_ring=%zu\n", format.input.label, wakes_per_ring);
+    std::printf("PCM check: %s -> ASIOSTInt32LSB wakes_per_ring=%zu", format.input.label, wakes_per_ring);
+    if (pattern_name) {
+        std::printf(" pattern=%.*ls", static_cast<int>(pattern_name->size()), pattern_name->data());
+    }
+    std::putchar('\n');
     for (const auto [rate, width] : stream_conditions) {
         const auto frames = comparison_seconds * rate / width * width;
         TempFile file;
         const auto* path = file.write(measurement_wave(format.input, rate, frames));
         PrefetchRing ring([&] { return PrefetchRing::PreparedTracks{retain_playable_track(path)}; },
-            width, format.output, 0, {}, wakes_per_ring);
+            width, format.output, 0, {}, wakes_per_ring, pattern);
         std::vector<std::uint32_t> left(width), right(width);
         for (std::uint32_t first = 0; first < frames; first += width) {
             const auto block = await_block(ring, left.data(), right.data());

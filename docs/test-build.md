@@ -184,7 +184,9 @@ CRTの表明・stdio・ブロック関数は前節の挿入例を拒否する。
 .\out\x64\Release\wavplay_tests.exe --measure-prefetch-stream pcm24 ASIOSTInt32LSB 2
 ```
 
-補充は1回の実行で次の6条件を順に測る。44.1 kHz・幅16の行は幅と量の両方の基準に使う。幅の単位は1ブロック当たりのフレーム数。
+通知間隔の並びを比較する場合は `--measure-refill-pattern` に `uniform`（等間隔）、`alternating`（短・長を交互）、`paired`（短・短・長・長）のいずれかを渡す。ステレオPCM24、44.1 kHz、幅16、`ASIOSTInt32LSB` の約30秒を1区間測り、頻度を明示した場合と同じ16列を出力する。PCM照合には `--check-prefetch-pcm pcm24 8 paired` のように方式を追加できる。二つの変則列は1周8回で使う。
+
+`--measure-prefetch-stream` と `--check-prefetch-pcm` は1回の実行で次の6条件を順に扱う。44.1 kHz・幅16の行は幅と量の両方の基準に使う。幅の単位は1ブロック当たりのフレーム数。
 
 | 系列 | サンプルレートと幅 | 比較のしかた |
 |---|---|---|

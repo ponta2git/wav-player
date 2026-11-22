@@ -880,13 +880,41 @@ void check_streaming_producer_parks_until_stop()
     expect("stop releases the last WAV", probe_file_access(next, GENERIC_WRITE | DELETE), ERROR_SUCCESS);
 }
 
-// The consumer sets space_available only at its wake threshold. Priming fills
-// the whole ring and the producer waits; the first refill frame is locked, so a
-// woken producer's refill fails and its thread ends. Its handle therefore shows
-// whether a pop woke it: still waiting after wake_interval - 1 pops, ended after
-// the threshold pop. The pops start only once the producer is seen blocked in
-// that wait, so a correct ring passes whatever the scheduling; the 200 ms wait
-// before the threshold pop is only the window in which an early wake shows.
+// With a full ring and its next frame locked, the producer stays parked until
+// the threshold pop. An early or missing wake changes which wait completes.
+void expect_wake_at_block(stream::PrefetchRing& ring, HANDLE producer, DWORD producer_id,
+    std::size_t width, std::size_t consumed, std::size_t threshold)
+{
+    await_requested_wait(producer, producer_id, "the producer waits for space before the tested interval");
+    std::vector<std::uint16_t> left(width), right(width);
+    for (std::size_t index = consumed; index < threshold; ++index) {
+        if (index + 1 == threshold) {
+            // An earlier wake would have let the producer read the locked frame and end.
+            expect("the producer waits through the pops before the threshold",
+                WaitForSingleObject(producer, 200), WAIT_TIMEOUT);
+            expect("no refill before the threshold", static_cast<int>(ring.read_failed()), 0);
+        }
+        const auto result = ring.consumer().pop(left.data(), right.data());
+        expect("block up to the threshold", result.status, stream::BlockStatus::ready);
+        expect("threshold run left", left.front(), static_cast<std::uint16_t>(index * width));
+        expect("threshold run right", right.back(), static_cast<std::uint16_t>(~(index * width + width - 1)));
+    }
+    expect("the threshold pop wakes the producer, whose refill fails and ends it",
+        WaitForSingleObject(producer, static_cast<DWORD>(hang_budget(std::chrono::seconds(5)).count())),
+        WAIT_OBJECT_0);
+    expect("the woken producer's refill failed", static_cast<int>(ring.read_failed()), 1);
+    ring.stop();
+    const auto cause = ring.read_error();
+    expect_true("the refill keeps its failure cause", static_cast<bool>(cause));
+    try {
+        std::rethrow_exception(cause);
+    } catch (const std::system_error& error) {
+        expect_true("the refill failure is ReadFile's lock violation",
+            error.code() == std::error_code(ERROR_LOCK_VIOLATION, std::system_category()) &&
+            std::string_view(error.what()).starts_with("ReadFile"));
+    }
+}
+
 void check_producer_wakes_at_threshold(std::optional<std::size_t> wakes_per_ring)
 {
     constexpr std::size_t width = 47;
@@ -898,7 +926,6 @@ void check_producer_wakes_at_threshold(std::optional<std::size_t> wakes_per_ring
     TempFile file;
     const auto* path = file.write(wave({pcm16(2, 44100), pcm16_ramp(2, total)}));
     auto lock = open_lock_handle(path);
-    // Priming reads end exactly before this frame.
     const auto refill = static_cast<DWORD>(media::WavReader(path).info().data_offset + layout.capacity * width * 4);
     if (!LockFile(lock.get(), refill, 0, 4, 0)) {
         throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "lock first refill frame");
@@ -912,38 +939,45 @@ void check_producer_wakes_at_threshold(std::optional<std::size_t> wakes_per_ring
     };
     auto ring = wakes_per_ring ? stream::PrefetchRing(prepare, width, audio::int16_le, 0, {}, *wakes_per_ring)
                                : stream::PrefetchRing(prepare, width, audio::int16_le);
-    // Construction returns once priming is signaled, possibly before the
-    // producer reaches its wait for space. A pop before then would let it
-    // refill without any wake. Past priming, that wait is the only one the
-    // producer requests itself, so a requested wait shows it blocked there.
-    await_requested_wait(producer.get(), producer_id, "the primed producer waits for space before the first pop");
+    expect_wake_at_block(ring, producer.get(), producer_id, width, 0, wake_interval);
+}
+
+void check_pattern_threshold(stream::RefillPattern pattern, std::size_t previous, std::size_t threshold)
+{
+    constexpr std::size_t width = 16;
+    constexpr std::size_t capacity = 5513;
+    // The first track ends when the preceding refill has used every slot the
+    // test freed. Its release gives the test a witness independent of timing.
+    TempFile first, second;
+    const auto* first_path = first.write(wave({pcm16(2, 44100), pcm16_ramp(2, (capacity + previous) * width)}));
+    const auto* second_path = second.write(wave({pcm16(2, 44100), pcm16_ramp(2, width)}));
+    auto lock = open_lock_handle(second_path);
+    const auto data_offset = static_cast<DWORD>(media::WavReader(second_path).info().data_offset);
+    if (!LockFile(lock.get(), data_offset, 0, 4, 0)) {
+        core::throw_last_error("lock next track at a refill boundary");
+    }
+    core::UniqueHandle producer;
+    DWORD producer_id{};
+    std::weak_ptr<media::WavReader> first_reader;
+    stream::PrefetchRing ring([&] {
+        producer = current_thread_handle();
+        producer_id = GetCurrentThreadId();
+        stream::PrefetchRing::PreparedTracks tracks{
+            stream::retain_playable_track(first_path), stream::retain_playable_track(second_path)};
+        first_reader = tracks.front();
+        return tracks;
+    }, width, audio::int16_le, 0, {}, 8, pattern);
     std::array<std::uint16_t, width> left{}, right{};
-    for (std::size_t index = 0; index < wake_interval; ++index) {
-        if (index + 1 == wake_interval) {
-            // An earlier wake would have let the producer read the locked frame and end.
-            expect("the producer waits through the pops before the threshold",
-                WaitForSingleObject(producer.get(), 200), WAIT_TIMEOUT);
-            expect("no refill before the threshold", static_cast<int>(ring.read_failed()), 0);
-        }
-        const auto result = ring.consumer().pop(left.data(), right.data());
-        expect("block up to the threshold", result.status, stream::BlockStatus::ready);
-        expect("threshold run left", left.front(), static_cast<std::uint16_t>(index * width));
-        expect("threshold run right", right.back(), static_cast<std::uint16_t>(~(index * width + width - 1)));
+    for (std::size_t i = 0; i < previous; ++i) {
+        expect("block before the tested interval", await_block(ring, left.data(), right.data()).status,
+            stream::BlockStatus::ready);
     }
-    expect("the threshold pop wakes the producer, whose refill fails and ends it",
-        WaitForSingleObject(producer.get(), static_cast<DWORD>(hang_budget(std::chrono::seconds(5)).count())),
-        WAIT_OBJECT_0);
-    expect("the woken producer's refill failed", static_cast<int>(ring.read_failed()), 1);
-    ring.stop();
-    const auto cause = ring.read_error();
-    expect_true("the refill keeps its failure cause", static_cast<bool>(cause));
-    try {
-        std::rethrow_exception(cause);
-    } catch (const std::system_error& error) {
-        expect_true("the refill failure is ReadFile's lock violation",
-            error.code() == std::error_code(ERROR_LOCK_VIOLATION, std::system_category()) &&
-            std::string_view(error.what()).starts_with("ReadFile"));
+    const auto deadline = std::chrono::steady_clock::now() + hang_budget(std::chrono::seconds(5));
+    while (!first_reader.expired() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
     }
+    expect_true("the preceding refill completed the first track", first_reader.expired());
+    expect_wake_at_block(ring, producer.get(), producer_id, width, previous, threshold);
 }
 
 void check_reader_thread_hints()
@@ -1373,6 +1407,15 @@ int wavplay_test::run_prefetch_ring_tests()
         const auto name = "producer wakes at its threshold for " + std::to_string(wakes_per_ring) + " wakes per ring";
         suite.run_timed(name.c_str(), [wakes_per_ring] { check_producer_wakes_at_threshold(wakes_per_ring); });
     }
+    suite.run_timed("nonuniform refill patterns wake at the second interval and across pattern and ring wraps", [] {
+        using stream::RefillPattern;
+        check_pattern_threshold(RefillPattern::alternating, 517, 1378);
+        check_pattern_threshold(RefillPattern::paired, 517, 1034);
+        for (const auto pattern : {RefillPattern::alternating, RefillPattern::paired}) {
+            check_pattern_threshold(pattern, 2756, 3273);
+            check_pattern_threshold(pattern, 5512, 6029);
+        }
+    });
     suite.run_timed("playlist validation runs on the ring producer before priming", check_playlist_preparation_thread);
     suite.run_timed("the named producer prepares at the default speed and refills at reader_refill_speed",
         check_reader_thread_hints);

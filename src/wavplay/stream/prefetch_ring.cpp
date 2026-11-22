@@ -40,10 +40,12 @@ static_assert(std::endian::native == std::endian::little);
 
 // Reserve a ring's private metadata inside the 16 MiB budget. Round the
 // remaining plane budget down to whole pages so its allocation stays within it.
-[[nodiscard]] PrefetchPolicy plane_policy(std::size_t metadata_bytes, std::size_t producer_wakes_per_ring)
+[[nodiscard]] PrefetchPolicy plane_policy(std::size_t metadata_bytes, std::size_t producer_wakes_per_ring,
+    RefillPattern pattern)
 {
     auto policy = default_prefetch_policy;
     policy.producer_wakes_per_ring = producer_wakes_per_ring;
+    policy.refill_pattern = pattern;
     if (metadata_bytes >= policy.ring_budget_bytes) {
         throw std::length_error("Prefetch metadata exhausts the ring budget");
     }
@@ -95,6 +97,8 @@ struct PrefetchRing::Impl {
     alignas(core::adjacent_line_pair) std::atomic<std::uint64_t> consumed{};
     std::size_t read_offset{};
     std::uint64_t next_wake{};
+    std::size_t wake_index{};
+    std::array<std::size_t, 4> wake_intervals{};
 
     Impl(std::size_t frames, audio::SampleFormat format)
         : output(format), block(plan_block_shape(frames, output.bytes()))
@@ -261,7 +265,8 @@ struct PrefetchRing::Impl {
         // returns. No input remains here once produce finishes and parks.
         alignas(core::cache_line_size) std::array<std::byte, media::WavReader::staging_bytes> staging;
         layout = plan_ring_layout(block, run.frame_count(), info.format.sample_rate, policy);
-        next_wake = layout.wake_interval;
+        wake_intervals = layout.wake_intervals(policy.refill_pattern);
+        next_wake = wake_intervals.front();
         pages = core::PageAllocation(layout.allocation_bytes());
         const auto capacity = layout.capacity;
         const auto total_blocks = layout.total_blocks;
@@ -330,7 +335,8 @@ struct PrefetchRing::Impl {
         consumed.store(next, std::memory_order_release);
         if (next == next_wake && written < layout.total_blocks) {
             SetEvent(space_available.get());
-            next_wake += layout.wake_interval;
+            wake_index = (wake_index + 1) % wake_intervals.size();
+            next_wake += wake_intervals[wake_index];
         }
         const bool last = next == layout.total_blocks;
         return last ? make_block(BlockStatus::last, layout.final_frames) : make_block(BlockStatus::ready, shape.frames);
@@ -339,13 +345,14 @@ struct PrefetchRing::Impl {
 #pragma warning(pop)
 
 PrefetchRing::PrefetchRing(PrepareTracks prepare, std::size_t block_frames,
-    audio::SampleFormat output, std::uint64_t first_frame, core::WakeHook hook, std::size_t producer_wakes_per_ring)
+    audio::SampleFormat output, std::uint64_t first_frame, core::WakeHook hook, std::size_t producer_wakes_per_ring,
+    RefillPattern pattern)
     : impl_(block_frames, output)
 {
     if (!prepare) {
         throw std::invalid_argument("Playback requires a track source");
     }
-    const auto policy = plane_policy(impl_.committed_size(), producer_wakes_per_ring);
+    const auto policy = plane_policy(impl_.committed_size(), producer_wakes_per_ring, pattern);
     impl_->start(std::move(prepare), first_frame, policy, hook);
 }
 

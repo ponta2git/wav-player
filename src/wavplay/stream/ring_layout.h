@@ -2,6 +2,7 @@
 
 #include "wavplay/stream/prefetch_policy.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -31,7 +32,10 @@ struct RingLayout {
     std::size_t channel_offset{}; // Half a line for small channels, otherwise plane_bytes.
     std::uint64_t total_blocks{}; // Blocks in the whole run, the last one zero-padded.
     std::size_t final_frames{};   // Valid frames of the last block.
-    std::size_t wake_interval{};  // The consumer wakes the producer every this many blocks.
+    std::size_t wake_interval{};  // Mean number of consumed blocks between producer notifications.
+
+    // A repeating sequence starting at the first consumed block of the run.
+    [[nodiscard]] std::array<std::size_t, 4> wake_intervals(RefillPattern pattern) const;
 
     [[nodiscard]] std::size_t allocation_bytes() const noexcept
     {

@@ -7,6 +7,8 @@
 
 namespace wavplay::stream {
 
+enum class RefillPattern { uniform, alternating, paired };
+
 // Producer-side tuning of the prefetch ring. The ring planner uses the memory
 // and wake limits; GaplessRun sizes each fill for its current source. The
 // real-time consumer only copies completed blocks.
@@ -22,6 +24,7 @@ struct PrefetchPolicy {
     std::size_t batch_source_bytes = 8 * 1024;
     // Consumer notifications per ring capacity, waking a producer blocked on a full ring.
     std::size_t producer_wakes_per_ring = 8;
+    RefillPattern refill_pattern = RefillPattern::uniform;
 };
 
 inline constexpr PrefetchPolicy default_prefetch_policy{};

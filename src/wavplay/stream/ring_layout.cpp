@@ -11,6 +11,9 @@ BlockShape plan_block_shape(std::size_t block_frames, std::size_t sample_bytes, 
     if (policy.target_seconds == 0 || policy.batch_source_bytes == 0 || policy.producer_wakes_per_ring == 0) {
         throw std::invalid_argument("Invalid prefetch policy");
     }
+    if (policy.refill_pattern != RefillPattern::uniform && policy.producer_wakes_per_ring != 8) {
+        throw std::invalid_argument("Nonuniform refill intervals require eight wakes per ring");
+    }
     if (sample_bytes == 0 || block_frames == 0 || block_frames > policy.ring_budget_bytes / 4 / sample_bytes) {
         throw std::invalid_argument("Playback block does not fit the prefetch ring");
     }
@@ -24,6 +27,19 @@ BlockShape plan_block_shape(std::size_t block_frames, std::size_t sample_bytes, 
         throw std::invalid_argument("Playback block does not fit the prefetch ring");
     }
     return shape;
+}
+
+std::array<std::size_t, 4> RingLayout::wake_intervals(RefillPattern pattern) const
+{
+    const auto delta = wake_interval / 4;
+    const auto shorter = wake_interval - delta;
+    const auto longer = wake_interval + delta;
+    switch (pattern) {
+    case RefillPattern::uniform:     return {wake_interval, wake_interval, wake_interval, wake_interval};
+    case RefillPattern::alternating: return {shorter, longer, shorter, longer};
+    case RefillPattern::paired:      return {shorter, shorter, longer, longer};
+    }
+    throw std::invalid_argument("Unknown refill pattern");
 }
 
 RingLayout plan_ring_layout(const BlockShape& block, std::uint64_t run_frames, std::uint32_t sample_rate,

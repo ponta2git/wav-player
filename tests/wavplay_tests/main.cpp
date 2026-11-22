@@ -117,8 +117,13 @@ constexpr std::array commands{
             operands.size() == 3 ? std::optional{parse_wakes_per_ring(operands[2])} : std::nullopt);
         return 0;
     }},
-    Command{L"--check-prefetch-pcm", " pcm16|pcm24 2|4|8", "Prefetch stream PCM check", 2, 2, [](Operands operands) {
-        check_prefetch_pcm(operands[0], parse_wakes_per_ring(operands[1]));
+    Command{L"--measure-refill-pattern", " uniform|alternating|paired", "Refill pattern measurement", 1, 1, [](Operands operands) {
+        measure_refill_pattern(operands[0]);
+        return 0;
+    }},
+    Command{L"--check-prefetch-pcm", " pcm16|pcm24 2|4|8 [uniform|alternating|paired]", "Prefetch stream PCM check", 2, 3, [](Operands operands) {
+        check_prefetch_pcm(operands[0], parse_wakes_per_ring(operands[1]),
+            operands.size() == 3 ? std::optional{std::wstring_view(operands[2])} : std::nullopt);
         return 0;
     }},
     Command{L"--probe-asio", " {CLSID}", "ASIO probe", 1, 1, [](Operands operands) {

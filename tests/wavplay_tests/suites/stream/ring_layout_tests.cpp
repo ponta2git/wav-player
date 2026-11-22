@@ -3,6 +3,7 @@
 #include "wavplay/core/memory.h"
 #include "wavplay/stream/ring_layout.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -15,6 +16,7 @@ using namespace wavplay_test;
 using wavplay::stream::plan_block_shape;
 using wavplay::stream::plan_ring_layout;
 using wavplay::stream::PrefetchPolicy;
+using wavplay::stream::RefillPattern;
 using wavplay::stream::RingLayout;
 
 // The expected strides below are written for 64-byte cache lines.
@@ -179,6 +181,37 @@ void test_wake_policies()
         12000, 18001, 3, 1500, true);
 }
 
+void test_refill_patterns()
+{
+    const auto block = plan_block_shape(16, 4);
+    const auto layout = plan_ring_layout(block, 30 * 44100, 44100);
+    expect("capacity with a partial final slot of the two-second target", layout.capacity, 5513);
+    struct Case {
+        RefillPattern pattern;
+        std::array<std::size_t, 4> positions;
+    };
+    for (const auto& test : {Case{RefillPattern::uniform, {689, 1378, 2067, 2756}},
+        Case{RefillPattern::alternating, {517, 1378, 1895, 2756}},
+        Case{RefillPattern::paired, {517, 1034, 1895, 2756}}}) {
+        const auto intervals = layout.wake_intervals(test.pattern);
+        std::size_t position{};
+        for (std::size_t i = 0; i < intervals.size(); ++i) {
+            position += intervals[i];
+            expect("cumulative refill position", position, test.positions[i]);
+        }
+        // A 24-slot run has mean interval three, so the quarter-interval
+        // adjustment rounds to zero for both nonuniform patterns.
+        const auto short_run = plan_ring_layout(block, 24 * block.frames, 44100);
+        for (const auto interval : short_run.wake_intervals(test.pattern)) {
+            expect("rounded intervals coincide", interval, 3);
+        }
+    }
+    expect_throw<std::invalid_argument>("a nonuniform pattern requires eight wakes per ring", [&] {
+        (void)plan_ring_layout(block, 30 * 44100, 44100,
+            PrefetchPolicy{.producer_wakes_per_ring = 4, .refill_pattern = RefillPattern::alternating});
+    });
+}
+
 } // namespace
 
 int wavplay_test::run_ring_layout_tests()
@@ -189,5 +222,6 @@ int wavplay_test::run_ring_layout_tests()
     suite.run("ring dimensions reject invalid inputs and bound arithmetic", test_ring_layout_boundaries);
     suite.run("small channel payloads share one line without sharing different blocks", test_shared_line_layout);
     suite.run("explicit refill policies and the default wake interval", test_wake_policies);
+    suite.run("refill patterns plan integral intervals with the same mean", test_refill_patterns);
     return suite.result("Ring layout");
 }

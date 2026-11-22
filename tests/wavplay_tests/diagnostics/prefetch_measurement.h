@@ -16,5 +16,9 @@ void measure_prefetch(std::wstring_view input_name = L"pcm16", std::wstring_view
 void measure_prefetch_stream(std::wstring_view input_name = L"pcm16", std::wstring_view output_name = {},
     std::optional<std::size_t> wakes_per_ring = {});
 
+// Compare a notification pattern on the same paced stereo PCM24 stream.
+void measure_refill_pattern(std::wstring_view pattern_name);
+
 // Check the full stereo PCM16/24 ramps against their 32-bit output outside timing.
-void check_prefetch_pcm(std::wstring_view input_name, std::size_t wakes_per_ring);
+void check_prefetch_pcm(std::wstring_view input_name, std::size_t wakes_per_ring,
+    std::optional<std::wstring_view> pattern_name = {});
