@@ -72,7 +72,9 @@ public:
     // `hook`'s event, runs its poll; priming wins when both are set. The poll
     // runs while the producer prepares and fills, so it must not touch
     // anything `prepare` uses. The positive number of producer wakes per ring
-    // determines the notification interval once, before playback starts.
+    // determines the mean notification interval once, before playback starts;
+    // the wakes alternate a shorter and a longer interval around it
+    // (RingLayout::short_wake_interval and long_wake_interval).
     PrefetchRing(PrepareTracks prepare, std::size_t block_frames,
         audio::SampleFormat output, std::uint64_t first_frame = 0, core::WakeHook hook = {},
         std::size_t producer_wakes_per_ring = default_prefetch_policy.producer_wakes_per_ring);

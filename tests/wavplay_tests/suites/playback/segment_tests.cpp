@@ -1571,7 +1571,8 @@ void test_read_failure_after_last_callback()
     constexpr std::size_t frames = 4 * rate;
     const auto layout = wavplay::stream::plan_ring_layout(
         wavplay::stream::plan_block_shape(block_frames, 2), frames, rate);
-    const auto locked_block = layout.capacity + layout.wake_interval - 1;
+    const auto first_wake = layout.short_wake_interval();
+    const auto locked_block = layout.capacity + first_wake - 1;
     expect_true("the locked block lies inside the run", locked_block < layout.total_blocks);
     TempFile file;
     const auto* path = file.write(wave({pcm16(2, rate), pcm16_ramp(2, frames)}));
@@ -1598,13 +1599,13 @@ void test_read_failure_after_last_callback()
     };
     auto done = start_track(driver, path);
     // Without start silence every half so far holds a popped block, prefilled B included.
-    for (unsigned tick = 0; driver.submitted.size() < layout.wake_interval; ++tick) {
-        if (tick == layout.wake_interval) {
+    for (unsigned tick = 0; driver.submitted.size() < first_wake; ++tick) {
+        if (tick == first_wake) {
             fail("the switches did not reach the wake threshold");
         }
         driver.tick();
     }
-    expect("halves up to the threshold pop", driver.submitted.size(), layout.wake_interval);
+    expect("halves up to the threshold pop", driver.submitted.size(), first_wake);
     expect_true("each of them holds PCM", std::ranges::none_of(driver.submitted, MockAsio::silent));
     // The woken producer refills up to the locked frame, fails and closes its reader.
     const auto deadline = std::chrono::steady_clock::now() + hang_budget(5s);

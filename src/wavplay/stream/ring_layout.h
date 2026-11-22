@@ -31,7 +31,13 @@ struct RingLayout {
     std::size_t channel_offset{}; // Half a line for small channels, otherwise plane_bytes.
     std::uint64_t total_blocks{}; // Blocks in the whole run, the last one zero-padded.
     std::size_t final_frames{};   // Valid frames of the last block.
-    std::size_t wake_interval{};  // The consumer wakes the producer every this many blocks.
+    std::size_t wake_interval{};  // Mean number of consumed blocks between producer wakes.
+
+    // The consumer wakes the producer after alternating shorter and longer
+    // intervals, the shorter first. Each pair spans two mean intervals; below
+    // a mean of four blocks the two are equal.
+    [[nodiscard]] std::size_t short_wake_interval() const noexcept { return wake_interval - wake_interval / 4; }
+    [[nodiscard]] std::size_t long_wake_interval() const noexcept { return wake_interval + wake_interval / 4; }
 
     [[nodiscard]] std::size_t allocation_bytes() const noexcept
     {
