@@ -103,6 +103,12 @@ private:
     struct Requests {
         std::atomic<bool> pause{};
         std::atomic<bool> stop{};
+        // Control thread, between requests: forget both, so neither carries into the next play.
+        void clear() noexcept
+        {
+            pause.store(false, std::memory_order_release);
+            stop.store(false, std::memory_order_release);
+        }
     };
     // Protects the file and holds its validated metadata; each play() reads an independent reopened cursor.
     std::shared_ptr<media::WavReader> track_;

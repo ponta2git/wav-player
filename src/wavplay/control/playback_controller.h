@@ -115,6 +115,9 @@ public:
     std::uint64_t select_track(std::size_t index, bool play = false);
     // Same Close receipt and cancellation policy as submit(close). The worker
     // saves normal window bounds only after releasing playback and the device.
+    // A Close that was accepted without bounds (the worker's own, from its
+    // owner window or thread) takes the bounds of a later call, which still
+    // returns 0; accepted bounds are never replaced.
     std::uint64_t close(std::optional<settings::WindowPlacement> placement);
     // Completion only, under the same lock as snapshot(), without copying
     // strings or allocating. Shutdown must still work after a UI allocation fails.

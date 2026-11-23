@@ -57,6 +57,11 @@ struct SharedWindow {
     LONG process{};
     LONG64 generation{};
 };
+// Every installed copy of the product maps this layout under the same object
+// names. A change to it needs a new version in the names (".v1." above), or
+// two versions would read each other's fields.
+static_assert(sizeof(SharedWindow) == 24 && offsetof(SharedWindow, window) == 0 &&
+    offsetof(SharedWindow, process) == 8 && offsetof(SharedWindow, generation) == 16);
 
 struct UnmapView {
     void operator()(SharedWindow* view) const noexcept { (void)UnmapViewOfFile(view); }

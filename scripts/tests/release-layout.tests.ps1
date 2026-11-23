@@ -37,7 +37,15 @@ try {
     $instructions = $result.Summary.Instructions
     Assert-True ($null -ne $instructions.BaselineCrossings -and
         $instructions.BaselineCrossings -eq $instructions.CandidateCrossings) 'Self-comparison lost its instruction coverage.'
-    Complete-TestGroup 'identical product images have matching symbols, instructions and section bytes'
+    $footprints = @($result.Summary.Footprints)
+    Assert-True ($footprints.Count -eq 4 -and (@($footprints | ForEach-Object Path) -join ',') -ceq 'Callback,Refill,Control,Display') 'A streaming path is missing from the footprints.'
+    foreach ($footprint in $footprints) {
+        Assert-True ($footprint.Baseline.Functions -gt 0 -and $footprint.Baseline.Pages -gt 0 -and
+            $footprint.Baseline.Lines -ge $footprint.Baseline.Pages) "The $($footprint.Path) path has no decoded entry in the product."
+        Assert-True ($footprint.Baseline.Pages -eq $footprint.Candidate.Pages -and $footprint.Baseline.Lines -eq $footprint.Candidate.Lines -and
+            $footprint.Baseline.Instructions -eq $footprint.Candidate.Instructions) 'A path footprint differs from itself.'
+    }
+    Complete-TestGroup 'identical product images have matching symbols, instructions, path footprints and section bytes'
 
     # A mixed pair must fail before it can overwrite a previously useful report.
     $copy = Join-Path $work 'build'

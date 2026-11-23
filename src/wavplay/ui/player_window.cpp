@@ -193,6 +193,10 @@ public:
                 }
                 refresh();
                 if (!window_ && controller_->closed()) {
+                    // Closed is final. A cleanup fault can be published with
+                    // it after refresh() copied the state above, and without
+                    // a window the exit code is its only report.
+                    exit_failure_ |= controller_->command_state().faulted;
                     break;
                 }
             } catch (...) {
@@ -426,6 +430,47 @@ private:
         rendered_revision_ = revision;
     }
 
+    // The full render of one snapshot: every text, the list and its selection,
+    // the buttons and the focus. refresh() decides whether it runs; ordinary
+    // progress updates only the time and never comes here.
+    void render_controls(const PlaybackSnapshot& snapshot, bool cleanup_error)
+    {
+        auto error = error_text(snapshot);
+        const auto operations = available(snapshot.command_state(), stop_receipt_);
+        controls_.text(control_id::status, state_text(snapshot.state));
+        playback_time_text(text_buffer_, snapshot.position_frames, snapshot.frame_count, snapshot.sample_rate);
+        controls_.text_reuse(control_id::time, text_buffer_);
+        device_text(text_buffer_, snapshot);
+        controls_.text_reuse(control_id::device, text_buffer_);
+        output_text(text_buffer_, snapshot);
+        controls_.text_reuse(control_id::output, text_buffer_);
+        buffer_text(text_buffer_, snapshot);
+        controls_.text_reuse(control_id::buffer, text_buffer_);
+        controls_.text(control_id::error, std::move(error));
+        controls_.playlist(snapshot.playlist);
+        playlist_label_text(text_buffer_, snapshot);
+        controls_.text_reuse(control_id::playlist_label, text_buffer_);
+        if (snapshot.accepted == snapshot.settled) {
+            const auto selected = snapshot.selected_index ? static_cast<LRESULT>(*snapshot.selected_index) : LB_ERR;
+            const auto list = controls_.child(control_id::playlist);
+            if (SendMessageW(list, LB_GETCURSEL, 0, 0) != selected) {
+                SendMessageW(list, LB_SETCURSEL, static_cast<WPARAM>(selected), 0);
+            }
+        }
+        const wchar_t* selected_path = snapshot.playlist && snapshot.selected_index &&
+            *snapshot.selected_index < snapshot.playlist->size() ?
+            (*snapshot.playlist)[*snapshot.selected_index].c_str() : L"";
+        controls_.text(control_id::file, selected_path);
+        controls_.text(control_id::pending,
+            pending_text(snapshot, cleanup_error, close_requested_, pending_selection_, pending_command_));
+        controls_.text(control_id::play_pause, snapshot.state == PlaybackState::playing ? L"&Pause" : L"&Play");
+        controls_.text(control_id::stop, cleanup_error ? L"&Close" : L"&Stop");
+        controls_.enable(control_id::play_pause, !close_requested_ && operations.toggle);
+        controls_.enable(control_id::stop, cleanup_error || (!close_requested_ && operations.stop));
+        controls_.enable(control_id::playlist, !close_requested_ && operations.select);
+        controls_.ensure_focus();
+    }
+
     void refresh()
     {
         if (!controller_ || rendering_ || (!refresh_forced_ &&
@@ -489,40 +534,7 @@ private:
             mark_rendered();
             return;
         }
-        auto error = error_text(snapshot);
-        const auto operations = available(snapshot.command_state(), stop_receipt_);
-        controls_.text(control_id::status, state_text(snapshot.state));
-        playback_time_text(text_buffer_, snapshot.position_frames, snapshot.frame_count, snapshot.sample_rate);
-        controls_.text_reuse(control_id::time, text_buffer_);
-        device_text(text_buffer_, snapshot);
-        controls_.text_reuse(control_id::device, text_buffer_);
-        output_text(text_buffer_, snapshot);
-        controls_.text_reuse(control_id::output, text_buffer_);
-        buffer_text(text_buffer_, snapshot);
-        controls_.text_reuse(control_id::buffer, text_buffer_);
-        controls_.text(control_id::error, std::move(error));
-        controls_.playlist(snapshot.playlist);
-        playlist_label_text(text_buffer_, snapshot);
-        controls_.text_reuse(control_id::playlist_label, text_buffer_);
-        if (snapshot.accepted == snapshot.settled) {
-            const auto selected = snapshot.selected_index ? static_cast<LRESULT>(*snapshot.selected_index) : LB_ERR;
-            const auto list = controls_.child(control_id::playlist);
-            if (SendMessageW(list, LB_GETCURSEL, 0, 0) != selected) {
-                SendMessageW(list, LB_SETCURSEL, static_cast<WPARAM>(selected), 0);
-            }
-        }
-        const wchar_t* selected_path = snapshot.playlist && snapshot.selected_index &&
-            *snapshot.selected_index < snapshot.playlist->size() ?
-            (*snapshot.playlist)[*snapshot.selected_index].c_str() : L"";
-        controls_.text(control_id::file, selected_path);
-        controls_.text(control_id::pending,
-            pending_text(snapshot, cleanup_error, close_requested_, pending_selection_, pending_command_));
-        controls_.text(control_id::play_pause, snapshot.state == PlaybackState::playing ? L"&Pause" : L"&Play");
-        controls_.text(control_id::stop, cleanup_error ? L"&Close" : L"&Stop");
-        controls_.enable(control_id::play_pause, !close_requested_ && operations.toggle);
-        controls_.enable(control_id::stop, cleanup_error || (!close_requested_ && operations.stop));
-        controls_.enable(control_id::playlist, !close_requested_ && operations.select);
-        controls_.ensure_focus();
+        render_controls(snapshot, cleanup_error);
         mark_rendered();
     }
 

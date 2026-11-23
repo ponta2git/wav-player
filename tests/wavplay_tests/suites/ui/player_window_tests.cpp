@@ -2523,13 +2523,17 @@ void test_failed_ui_renders_once_per_revision(bool playing)
 // DestroyWindow from outside the product discards the window's queued state
 // notification, which leaves the coalescing flag set. Only the cleared posting
 // target (WM_NCDESTROY) still lets the later closing and closed publications
-// wake the UI, which then ends with the external quit's contract.
-void test_external_destroy_with_queued_notification()
+// wake the UI, which then ends with the external quit's contract. With no
+// window left, a failed rate restoration during that cleanup can only show in
+// the exit code.
+void test_external_destroy_with_queued_notification(bool fault)
 {
     TempFile file;
     GuiDriver driver;
     CallGate release_call;
     driver.on_release = [&] { release_call.block(); };
+    driver.sample_rate = fault ? 44100 : 48000;
+    driver.refuse_restore = fault;
     Gui gui(driver, source(file, 48000 * 4), SW_SHOWNOACTIVATE);
     ReleaseGate release{release_call};
     gui.settled(L"Stopped");
@@ -2545,7 +2549,8 @@ void test_external_destroy_with_queued_notification()
     // returns, after the UI has handled the destruction.
     release_call.wait();
     release_call.open();
-    expect("an externally destroyed window exits successfully", gui.finish(), 0);
+    expect(fault ? "a cleanup fault after an external destruction fails the exit code" :
+        "an externally destroyed window exits successfully", gui.finish(), fault ? 1 : 0);
     expect("the destruction stops the stream once", driver.stops, 1);
     driver.check_closed();
 }
@@ -3225,8 +3230,12 @@ int wavplay_test::run_player_window_tests()
     suite.run_timed("GUI failure during playback releases audio before offering Close", [] {
         test_failed_ui_renders_once_per_revision(true);
     });
-    suite.run_timed("GUI closes after an external DestroyWindow that discards a queued notification",
-        test_external_destroy_with_queued_notification);
+    suite.run_timed("GUI closes after an external DestroyWindow that discards a queued notification", [] {
+        test_external_destroy_with_queued_notification(false);
+    });
+    suite.run_timed("GUI reports a cleanup fault after an external DestroyWindow in its exit code", [] {
+        test_external_destroy_with_queued_notification(true);
+    });
     suite.run_timed("GUI corrects offscreen and oversized saved window bounds", test_offscreen_placement);
     suite.run_timed("GUI shows NO DEVICE and creates an unselected first-run settings file", test_missing_device_display);
     suite.run_timed("GUI reports settings-save failures after releasing the device", test_settings_save_error_display);

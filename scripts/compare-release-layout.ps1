@@ -53,6 +53,7 @@ function Get-LayoutSummary($Symbols, $Instructions, $Sections) {
             BaselineCrossings = $Instructions.BaselineCrossings
             CandidateCrossings = $Instructions.CandidateCrossings
         }
+        Footprints = $Instructions.Footprints
         Sections = $Sections
     }
 }
@@ -111,4 +112,8 @@ foreach ($group in $summary.Groups) {
     Write-Output ('{0}: {1} moved of {2} matched; {3} unmatched' -f $group.Label, $group.Moved, $group.Matched, $group.Unmatched)
 }
 Write-Output ('Instruction comparison: ' + $instructions.Status)
+foreach ($footprint in $summary.Footprints) {
+    Write-Output ('{0} path: {1} -> {2} pages, {3} -> {4} lines' -f $footprint.Path,
+        $footprint.Baseline.Pages, $footprint.Candidate.Pages, $footprint.Baseline.Lines, $footprint.Candidate.Lines)
+}
 Write-Output ('Layout report: ' + $destination)

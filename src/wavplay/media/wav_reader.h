@@ -53,20 +53,21 @@ public:
     // std::invalid_argument when no lossless converter exists for the output.
     [[nodiscard]] std::size_t read_planar(const audio::SampleFormat& output, std::span<std::byte> left,
         std::span<std::byte> right);
-    // The same with a converter already chosen for this WAV's format, as a
-    // producer reads every batch. Throws std::invalid_argument when the
-    // converter was chosen for another format.
+    // The same with a converter already chosen for this WAV's format. Throws
+    // std::invalid_argument when the converter was chosen for another format.
     [[nodiscard]] std::size_t read_planar(const audio::PlanarConverter& converter, std::span<std::byte> left,
         std::span<std::byte> right);
-    // The same into the next frames of blocked planes, as the producer fills
-    // aligned ring slots in place. Returns at most target.frames. Throws
-    // std::invalid_argument for null nonempty planes, overflowing dimensions,
-    // blocks that cannot hold whole samples or planes that overlap. The caller
-    // provides enough storage for the entire requested layout.
+    // The same into the next frames of blocked planes (aligned slots with a
+    // stride), staging on this call's stack. Returns at most target.frames.
+    // Throws std::invalid_argument for null nonempty planes, overflowing
+    // dimensions, blocks that cannot hold whole samples or planes that overlap.
+    // The caller provides enough storage for the entire requested layout.
     [[nodiscard]] std::size_t read_planar(const audio::PlanarConverter& converter, const audio::PlanarBlocks& target);
-    // Producer-owned scratch reused for one run. It must be disjoint from the
+    // The playback path: the ring's producer fills its slots through this
+    // entry (stream::GaplessRun::read), with one scratch buffer it owns and
+    // reuses for the whole run. The buffer must be disjoint from the
     // destinations and remain valid for this synchronous call; it is not kept.
-    // The fixed extent preserves the same ReadFile limit as the owning entry.
+    // The fixed extent preserves the same ReadFile limit as the entries above.
     [[nodiscard]] std::size_t read_planar(const audio::PlanarConverter& converter,
         const audio::PlanarBlocks& target, StagingBuffer staging);
 

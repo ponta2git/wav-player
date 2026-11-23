@@ -85,8 +85,9 @@ long output_channel_count(IASIO& driver)
 BufferSizeRange query_buffer_size(IASIO& driver)
 {
     BufferSizeRange size{};
-    auto& [minimum, maximum, preferred, granularity] = size;
-    throw_if_error(driver.getBufferSize(&minimum, &maximum, &preferred, &granularity), "ASIO getBufferSize failed");
+    // Named members, so the SDK's parameter order does not depend on the struct's.
+    throw_if_error(driver.getBufferSize(&size.minimum, &size.maximum, &size.preferred, &size.granularity),
+        "ASIO getBufferSize failed");
     validate_buffer_size(size);
     return size;
 }

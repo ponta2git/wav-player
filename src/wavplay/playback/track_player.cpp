@@ -112,8 +112,7 @@ PlaybackResult TrackPlayer::reinitialize(asio::DriverSession& session, PlaybackO
     if (result != PlaybackResult::reinitialize_required) {
         return result; // A real fault racing recovery must not be erased.
     }
-    requests_->pause.store(false, std::memory_order_release);
-    requests_->stop.store(false, std::memory_order_release);
+    requests_->clear();
     idle_fault_reported_ = true;
     const auto cancelled = [&]() noexcept {
         if (observer.poll) {
@@ -188,8 +187,7 @@ void TrackPlayer::stop()
     }
     observe_idle_fault();
     position_ = 0;
-    requests_->pause.store(false, std::memory_order_release);
-    requests_->stop.store(false, std::memory_order_release);
+    requests_->clear();
     // Retain idle_token_ so a reset racing this operation still blocks the next play.
 }
 
@@ -214,8 +212,7 @@ PlaybackResult TrackPlayer::play(asio::DriverSession& session, PlaybackDiagnosti
     if (position_ == track_->info().frame_count) {
         return PlaybackResult::completed;
     }
-    requests_->pause.store(false, std::memory_order_release);
-    requests_->stop.store(false, std::memory_order_release);
+    requests_->clear();
     struct PlayingGuard {
         bool& flag;
         explicit PlayingGuard(bool& value) : flag(value) { flag = true; }
