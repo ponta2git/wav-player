@@ -259,6 +259,25 @@ struct PlaybackController::Impl {
         fail_locked(std::move(error), result);
     }
 
+    // Worker thread, from the catch block of a callback that the driver's STA
+    // or a running request entered: publish the failure, then end the request
+    // or reinitialization that is running, if any, so the worker returns to
+    // its loop. Without one the Stop request is discarded by the next play.
+    void fail_running(std::exception_ptr error) noexcept
+    {
+        fail(std::move(error));
+        if (player) {
+            player->request_stop();
+        }
+    }
+
+    // The state an idle worker publishes: stopped, or still closing once Close
+    // was accepted, so a late result never shows Stopped during the release.
+    [[nodiscard]] PlaybackState stopped_unless_closing_locked() const noexcept
+    {
+        return close_requested ? PlaybackState::closing : PlaybackState::stopped;
+    }
+
     // Windows calls a window procedure only on the thread that created the
     // window, and the worker creates its owner window. This procedure may
     // therefore read worker-only state (active, player) without the lock.
@@ -273,10 +292,7 @@ struct PlaybackController::Impl {
             try {
                 (void)self->submit(PlaybackCommand::close);
             } catch (...) {
-                self->fail(std::current_exception());
-                if (self->active) {
-                    self->player->request_stop();
-                }
+                self->fail_running(std::current_exception());
             }
             return 0;
         }
@@ -403,8 +419,7 @@ struct PlaybackController::Impl {
                 self.deliver_active();
             }
         } catch (...) {
-            self.fail(std::current_exception());
-            self.player->request_stop();
+            self.fail_running(std::current_exception());
         }
     }
 
@@ -460,8 +475,7 @@ struct PlaybackController::Impl {
             }
             self.deliver_active();
         } catch (...) {
-            self.fail(std::current_exception());
-            self.player->request_stop();
+            self.fail_running(std::current_exception());
         }
     }
 
@@ -546,7 +560,7 @@ struct PlaybackController::Impl {
         status.sample_rate = 0;
         status.track_error = std::move(error);
         status.result = PlaybackResult::next_track_rejected;
-        status.state = close_requested ? PlaybackState::closing : PlaybackState::stopped;
+        status.state = stopped_unless_closing_locked();
         status.settled = sequence;
         publish_locked();
     }
@@ -577,7 +591,7 @@ struct PlaybackController::Impl {
         update_position_locked(false);
         status.track_error = {};
         status.result = PlaybackResult::stopped;
-        status.state = close_requested ? PlaybackState::closing : PlaybackState::stopped;
+        status.state = stopped_unless_closing_locked();
         // Selection alone is complete with its metadata. Select and Play still
         // waits for start success before settling the same receipt.
         if (command == PlaybackCommand::select) { status.settled = sequence; }
@@ -596,8 +610,7 @@ struct PlaybackController::Impl {
                 self.player->request_stop();
             }
         } catch (...) {
-            self.fail(std::current_exception());
-            self.player->request_stop();
+            self.fail_running(std::current_exception());
         }
     }
 
@@ -632,7 +645,7 @@ struct PlaybackController::Impl {
                 status.device_available = !close_requested;
                 update_position_locked(false);
                 status.result = PlaybackResult::stopped;
-                status.state = close_requested ? PlaybackState::closing : PlaybackState::stopped;
+                status.state = stopped_unless_closing_locked();
                 if (!close_requested) {
                     status.settled = status.accepted;
                 }
@@ -905,7 +918,7 @@ struct PlaybackController::Impl {
         const std::lock_guard lock(gate);
         status.device_available = true;
         if (status.selected_index) { update_position_locked(false); }
-        status.state = close_requested ? PlaybackState::closing : PlaybackState::stopped;
+        status.state = stopped_unless_closing_locked();
         publish_locked();
         return true;
     }
