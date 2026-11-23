@@ -156,6 +156,13 @@ struct PlaybackController::Impl {
         bool needs_wake{};
         {
             const std::lock_guard lock(gate);
+            // The worker's own Close (WM_CLOSE to the owner window, WM_QUIT on
+            // its thread) carries no window. The GUI's Close that follows is
+            // rejected below like any second Close, but the bounds it brings
+            // are still the ones to save, until release() reads them.
+            if (command == PlaybackCommand::close && close_requested && placement && !window_to_save) {
+                window_to_save = placement;
+            }
             if (command < PlaybackCommand::play || command > PlaybackCommand::close ||
                 ((command == PlaybackCommand::select || command == PlaybackCommand::select_play) != track.has_value()) ||
                 (track && (!status.playlist || *track >= status.playlist->size())) ||

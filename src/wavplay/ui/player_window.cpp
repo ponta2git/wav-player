@@ -193,6 +193,10 @@ public:
                 }
                 refresh();
                 if (!window_ && controller_->closed()) {
+                    // Closed is final. A cleanup fault can be published with
+                    // it after refresh() copied the state above, and without
+                    // a window the exit code is its only report.
+                    exit_failure_ |= controller_->command_state().faulted;
                     break;
                 }
             } catch (...) {

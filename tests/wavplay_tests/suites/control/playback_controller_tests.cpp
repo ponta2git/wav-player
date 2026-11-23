@@ -2340,6 +2340,43 @@ void test_window_shutdown()
     }
 }
 
+// The worker's own Close arrives without window bounds. The GUI's Close that
+// follows is a rejected second Close, yet its bounds are the ones to save.
+void test_owner_close_keeps_window_save()
+{
+    for (const bool quit : {false, true}) {
+        TempFile audio, configuration;
+        const std::string original = "[General]\nSelectedDevice={76543210-89AB-CDEF-8123-456789ABCDEF}\n";
+        const auto settings_path = configuration.write(Bytes(original.begin(), original.end()));
+        ControllerDriver driver;
+        CallGate teardown;
+        driver.on_release = [&] { teardown.block(); };
+        PlaybackController controller(CLSID{}, audio.write(wave({pcm16(2, 48000), pcm16_ramp(2, 100)})),
+            driver.activation(), {}, {}, settings_path);
+        ReleaseGate release{teardown};
+        const auto before = state_is(controller, PlaybackState::stopped);
+        const auto posted = quit ? PostThreadMessageW(driver.owner_thread, WM_QUIT, 0, 0) :
+            PostMessageW(driver.owner_window, WM_CLOSE, 0, 0);
+        expect("owner STA accepts the shutdown message", posted, TRUE);
+        teardown.wait(); // The worker's Close was accepted; the device is still being released.
+        const wavplay::settings::WindowPlacement bounds{-120, 50, 900, 650, true};
+        expect("the GUI's Close after the worker's own is a rejected second Close", controller.close(bounds), 0);
+        expect("accepted bounds are never replaced",
+            controller.close(wavplay::settings::WindowPlacement{1, 2, 300, 200, false}), 0);
+        teardown.open();
+        const auto closed = state_is(controller, PlaybackState::closed);
+        controller.join();
+        expect("the worker's Close is the only receipt", closed.accepted, before.accepted + 1);
+        expect_true("the late bounds save without fault", !closed.faulted());
+        driver.check_closed();
+        const auto saved = wavplay::settings::load_application_config(settings_path);
+        expect_true("the late bounds are saved", saved.window.has_value());
+        expect("the first bounds after the worker's Close are the saved ones", saved.window.value().x, -120);
+        expect("their size is saved with them", saved.window.value().width, 900);
+        expect_true("their maximized state is saved with them", saved.window.value().maximized);
+    }
+}
+
 void test_rate_refusal_result()
 {
     // A device that cannot run the WAV's rate reports the refusal, not a driver
@@ -3167,6 +3204,8 @@ int wavplay_test::run_playback_controller_tests()
     suite.run_timed("controller preserves notifications delivered during driver Release", test_fault_during_driver_release);
     suite.run_timed("controller retains Release faults after Close cancels reinitialization", test_close_keeps_fault_after_cancelled_reinitialization);
     suite.run_timed("controller closes on WM_CLOSE and WM_QUIT without callbacks", test_window_shutdown);
+    suite.run_timed("controller saves the window bounds of a Close that follows its own WM_CLOSE or WM_QUIT",
+        test_owner_close_keeps_window_save);
     suite.run_timed("controller releases singleton ownership and implicitly closes", test_controller_claim_and_implicit_close);
     suite.run_timed("controller announces every snapshot revision to its change listener", test_change_listener);
     suite.run_timed("controller labels progress publications for an optional progress listener", test_progress_listener);
