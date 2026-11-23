@@ -11,6 +11,32 @@ function New-Symbol([string]$Name, [string]$Object, [uint32]$Rva) {
     [pscustomobject]@{ Name = $Name; Object = $Object; Rva = $Rva; Section = '.text'; IsFunction = $true; Group = 'Other' }
 }
 
+# The streaming paths are named by decorated function names. A function that
+# runs only on a state change, a failure or a dispatched message is not a member.
+foreach ($case in @(
+    @('?switch_buffer@?A0xfa60603d@playback@wavplay@@YAXJJ@Z', 'Callback'),
+    @('?fill_slots@Impl@PrefetchRing@stream@wavplay@@QEAAXAEAVGaplessRun@34@_K1_N@Z', 'Refill'),
+    @('?wait_for_stop@SegmentRunner@?A0xab3cf866@playback@wavplay@@AEAAXXZ', 'Control'),
+    @('?wait_for_events_until@core@wavplay@@YA?AUEventWait@12@XZ', 'Control'),
+    @('?poll@Impl@PlaybackController@control@wavplay@@SAXPEAX@Z', 'Control'),
+    @('??R<lambda_1>@?BB@??play@TrackPlayer@playback@wavplay@@QEAA?AW4PlaybackResult@34@XZ@QEBA@XZ', 'Control'),
+    @('?<lambda_invoker_cdecl>@<lambda_3>@?BB@??play@TrackPlayer@playback@wavplay@@QEAA?AW4PlaybackResult@45@XZ@SA@PEAX@Z', 'Control'),
+    @('?progressed@StateNotification@?A0x379dfc1b@ui@wavplay@@SAXPEAX_K@Z', 'Control'),
+    @('?changed@StateNotification@?A0x379dfc1b@ui@wavplay@@SAXPEAX_K@Z', 'Other'),
+    @('?pump_messages@core@wavplay@@YA_NXZ', 'Other'),
+    @('?deliver_active@Impl@PlaybackController@control@wavplay@@QEAAXXZ', 'Other'),
+    @('?refresh@PlayerWindow@?A0x379dfc1b@ui@wavplay@@AEAAXXZ', 'Display'),
+    @('?window_proc@PlayerWindow@?A0x379dfc1b@ui@wavplay@@CA_JPEAUHWND__@@I_K_J@Z', 'Display'),
+    @('?playback_time_text@ui@wavplay@@YAXAEAV?$basic_string@_W@std@@_K1I@Z', 'Display'),
+    @('?refresh_failed@PlayerWindow@?A0x379dfc1b@ui@wavplay@@AEAAXXZ', 'Other'),
+    @('?render_controls@PlayerWindow@?A0x379dfc1b@ui@wavplay@@AEAAXAEBUPlaybackSnapshot@control@3@_N@Z', 'Other'))) {
+    $symbol = [pscustomobject]@{ Name = $case[0]; IsFunction = $true }
+    Assert-True ((Get-LayoutSymbolGroup $symbol) -ceq $case[1]) "Unexpected path group for $($case[0])."
+}
+$data = [pscustomobject]@{ Name = '?poll@Impl@PlaybackController@control@wavplay@@SAXPEAX@Z'; IsFunction = $false }
+Assert-True ((Get-LayoutSymbolGroup $data) -ceq 'Other') 'A data symbol joined a function path.'
+Complete-TestGroup 'Streaming path membership by decorated name'
+
 $baseline = [pscustomobject]@{
     Sha256 = 'left'
     Symbols = @(

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Uses the same PE and MAP readers as the startup audit. These groups describe
 # symbols present in the final image; some functions can also be inlined.
+# Callback, Refill, Control and Display are the paths that run while a segment
+# streams; layout-instructions.ps1 reports the pages and lines each one occupies.
 function Get-LayoutSymbolGroup($Symbol) {
     $name = $Symbol.Name
     if (-not $Symbol.IsFunction) {
@@ -16,6 +18,23 @@ function Get-LayoutSymbolGroup($Symbol) {
         $name -cmatch '^\?(?:read_checked_planar@WavReader|read_exact_at@ReadOnlyFile)@media@wavplay@@') { return 'Refill' }
     # Match the owning namespace, not an audio type in another function's signature.
     if ($name -cmatch '^\?(?:[^@]+@)+@?\?A0x[0-9a-fA-F]+@audio@wavplay@@Y') { return 'Kernel' }
+    # What the control thread enters at every periodic wake while a segment
+    # streams: its timed wait, the request's observers, the controller's
+    # progress poll and the listener of a progress publication. Message
+    # dispatch and the listener of state changes run only when something else
+    # happens, so they are not members.
+    if ($name -cmatch '^\?wait_for_stop@SegmentRunner@\?A0x[0-9a-fA-F]+@playback@wavplay@@' -or
+        $name -cmatch '^\?wait_until@PlaybackSignal@playback@wavplay@@' -or
+        $name -cmatch '^\?(?:wait_for_events?_until|quit_pending)@core@wavplay@@' -or
+        $name -cmatch '^\?(?:\?R|<lambda_invoker_cdecl>@)<lambda_\d+>@\?[0-9A-Z]+@\?\?play@TrackPlayer@playback@wavplay@@' -or
+        $name -cmatch '^\?(?:poll|publish_progress_and_check_commands|update_position_locked)@Impl@PlaybackController@control@wavplay@@' -or
+        $name -cmatch '^\?progressed@StateNotification@(?:\?A0x[0-9a-fA-F]+@)?ui@wavplay@@') { return 'Control' }
+    # What the GUI thread enters for one progress publication: the message loop,
+    # the window procedure, the refresh and the time text it renders.
+    if ($name -cmatch '^\?(?:run|translate|window_proc|refresh)@PlayerWindow@\?A0x[0-9a-fA-F]+@ui@wavplay@@' -or
+        $name -cmatch '^\?refresh_snapshot@(?:Impl@)?PlaybackController@control@wavplay@@' -or
+        $name -cmatch '^\?playback_time_text@ui@wavplay@@' -or
+        $name -cmatch '^\?text_reuse@PlayerControls@ui@wavplay@@') { return 'Display' }
     'Other'
 }
 

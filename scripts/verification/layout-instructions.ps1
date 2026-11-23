@@ -61,7 +61,10 @@ function Get-LayoutInstructionBodies {
             continue
         }
         [void]$starts.Add($s.Rva)
-        if ($s.Group -cin 'Callback','Refill','Kernel') { $selected[[long]$s.Rva] = $true }
+        # Folded aliases share an entry. Keep the first path group named for it.
+        if ($s.Group -cin 'Callback','Refill','Kernel','Control','Display' -and -not $selected.ContainsKey([long]$s.Rva)) {
+            $selected[[long]$s.Rva] = $s.Group
+        }
     }
     $entries = @($starts)
     $bodies = @{}
@@ -77,6 +80,7 @@ function Get-LayoutInstructionBodies {
             $bodies[$start] = [pscustomobject]@{
                 Start = $start; End = $end; FileDelta = [long]$section.Raw - $section.Rva; Code = @{}
                 Instructions = @(); Crossings = @(); Missing = $false; IndirectJumps = 0
+                Group = $selected[$start]; Returning = @()
             }
             break
         }
@@ -121,6 +125,10 @@ function Get-LayoutInstructionBodies {
         $todo = [Collections.Generic.Stack[long]]::new()
         $seen = [Collections.Generic.HashSet[long]]::new()
         $code = [Collections.Generic.List[object]]::new()
+        # For the footprint: which instructions lead to which, and where control
+        # leaves the body other than through a trap.
+        $predecessors = @{}
+        $leaving = [Collections.Generic.Stack[long]]::new()
         $todo.Push($body.Start)
         while ($todo.Count) {
             $ip = $todo.Pop()
@@ -128,23 +136,76 @@ function Get-LayoutInstructionBodies {
             $ins = $body.Code[$ip]
             if ($null -eq $ins) { $body.Missing = $true; continue }
             $code.Add($ins)
+            $successors = @()
             if ($ins.Mnemonic -cmatch '^(?:j\w+|loop\w*)$') {
                 if ($null -ne $ins.Reference -and $ins.Reference.Kind -ceq 'Branch') {
                     $target = $ins.Reference.Target
-                    if ($target -ge $body.Start -and $target -lt $body.End) { $todo.Push($target) }
-                } elseif ($null -eq $ins.Reference -or -not $imports.Contains($ins.Reference.Target)) {
-                    ++$body.IndirectJumps
-                } # A RIP-relative tail jump via a MAP import slot leaves the image.
+                    if ($target -ge $body.Start -and $target -lt $body.End) { $todo.Push($target); $successors += $target }
+                    else { $leaving.Push($ip) } # A direct tail transfer.
+                } else {
+                    if ($null -eq $ins.Reference -or -not $imports.Contains($ins.Reference.Target)) { ++$body.IndirectJumps }
+                    # A RIP-relative tail jump via a MAP import slot leaves the image.
+                    # An unresolved indirect jump continues somewhere unknown.
+                    $leaving.Push($ip)
+                }
             }
-            if ($ins.Mnemonic -cmatch '^(?:jmp|ret\w*|iret\w*|ud2|hlt|int3?)$') { continue }
-            $next = $ip + $ins.Length
-            if ($next -lt $body.End) { $todo.Push($next) }
+            if ($ins.Mnemonic -cmatch '^(?:ret\w*|iret\w*)$') { $leaving.Push($ip) }
+            if ($ins.Mnemonic -cnotmatch '^(?:jmp|ret\w*|iret\w*|ud2|hlt|int3?)$') {
+                $next = $ip + $ins.Length
+                if ($next -lt $body.End) { $todo.Push($next); $successors += $next }
+            }
+            foreach ($successor in $successors) {
+                if (-not $predecessors.ContainsKey($successor)) { $predecessors[$successor] = [Collections.Generic.List[long]]::new() }
+                $predecessors[$successor].Add($ip)
+            }
         }
         $body.Instructions = @($code | Sort-Object Rva)
+        # An instruction is returning if some path from it leaves the body by a
+        # return or a jump. The rest only reaches a trap: MSVC places int 3
+        # after a call that does not return, such as one that throws.
+        $returning = [Collections.Generic.HashSet[long]]::new()
+        while ($leaving.Count) {
+            $ip = $leaving.Pop()
+            if (-not $returning.Add($ip) -or -not $predecessors.ContainsKey($ip)) { continue }
+            foreach ($predecessor in $predecessors[$ip]) { $leaving.Push($predecessor) }
+        }
+        $body.Returning = @($body.Instructions | Where-Object { $returning.Contains($_.Rva) })
         $body.Crossings = @($body.Instructions | Where-Object { ($_.Rva % 64) + $_.Length -gt 64 } |
             Select-Object Offset, Length, Text)
     }
     $bodies
+}
+
+# The 4 KiB pages and 64-byte lines that one path's function entries occupy in
+# one image, counted over their returning instructions. Trap-only instructions
+# (the tails that throw) are counted apart. A function with an undecoded
+# instruction or an unresolved indirect jump is open: the walk stopped there,
+# so its count is a lower bound.
+function Get-LayoutFootprint {
+    param($Bodies, [string]$Group)
+    $pages = [Collections.Generic.SortedSet[long]]::new()
+    $lines = [Collections.Generic.HashSet[long]]::new()
+    $functions = $open = $instructions = $trapOnly = 0
+    [long]$bytes = 0
+    foreach ($body in $Bodies.Values) {
+        if ($body.Group -cne $Group) { continue }
+        ++$functions
+        if ($body.Missing -or $body.IndirectJumps) { ++$open }
+        $trapOnly += $body.Instructions.Count - $body.Returning.Count
+        foreach ($ins in $body.Returning) {
+            ++$instructions
+            $bytes += $ins.Length
+            foreach ($address in [long]$ins.Rva, ([long]$ins.Rva + $ins.Length - 1)) {
+                [void]$pages.Add($address -shr 12)
+                [void]$lines.Add($address -shr 6)
+            }
+        }
+    }
+    [pscustomobject]@{
+        Functions = $functions; OpenFunctions = $open; Instructions = $instructions; Bytes = $bytes
+        Lines = $lines.Count; Pages = $pages.Count; PageRvas = @($pages | ForEach-Object { $_ -shl 12 })
+        TrapOnlyInstructions = $trapOnly
+    }
 }
 
 function Compare-LayoutFunctionBody {
@@ -196,8 +257,8 @@ function Compare-LayoutFunctionBody {
 function Compare-LayoutInstructions {
     param($Baseline, $Candidate, $SymbolComparison, [string]$Dumpbin)
     $result = [pscustomobject]@{
-        Status = 'Unavailable'; Reason = ''; Scope = 'MAP callback, refill and conversion function entries, checked against PE bytes. Counts cover fall-through and direct branches within each entry. Calls and unresolved indirect jump targets are not followed. RawEqual describes observed bytes. PDB labels are optional.'
-        BaselineCrossings = $null; CandidateCrossings = $null; Details = @()
+        Status = 'Unavailable'; Reason = ''; Scope = 'MAP callback, refill and conversion function entries, checked against PE bytes. Counts cover fall-through and direct branches within each entry. Calls and unresolved indirect jump targets are not followed. RawEqual describes observed bytes. PDB labels are optional. Footprints count the pages and lines of the same walk over each streaming path''s entries, including the control wake and the display refresh, without their trap-only tails.'
+        BaselineCrossings = $null; CandidateCrossings = $null; Details = @(); Footprints = @()
     }
     if (-not $Dumpbin) { $result.Reason = 'dumpbin unavailable'; return $result }
     $leftLines = [string[]]@(& $Dumpbin /nologo /disasm $Baseline.ExePath)
@@ -257,10 +318,15 @@ function Compare-LayoutInstructions {
         $covered = $false
         $sum = 0
         foreach ($body in $bodies.Values) {
+            # The crossing count keeps its scope: the entries listed in Details.
+            if ($body.Group -cnotin 'Callback','Refill','Kernel') { continue }
             if ($body.Instructions.Count) { $covered = $true; $sum += $body.Crossings.Count }
         }
         if ($covered) { $result.("${side}Crossings") = $sum }
     }
+    $result.Footprints = @(foreach ($group in 'Callback','Refill','Control','Display') {
+        [pscustomobject]@{ Path = $group; Baseline = Get-LayoutFootprint $left $group; Candidate = Get-LayoutFootprint $right $group }
+    })
     if ($null -eq $result.BaselineCrossings -and $null -eq $result.CandidateCrossings) {
         $result.Reason = 'No selected MAP entry could be decoded.'
     } elseif ($partial) {

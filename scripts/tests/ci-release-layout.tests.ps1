@@ -49,6 +49,12 @@ $layout = @{
     Groups = @(@{Label='Kernels';Matched=7;Moved=4;Unmatched=2;MinDelta=-8;MaxDelta=32},
         @{Label='Constants';Matched=0;Moved=0;Unmatched=1;MinDelta=$null;MaxDelta=$null})
     Instructions = @{Status='Partial';BaselineCrossings=3;CandidateCrossings=4}
+    Footprints = @(foreach ($path in 'Callback','Refill','Control','Display') {
+        $pages = if ($path -ceq 'Control') { 7 } else { 5 }
+        @{Path=$path
+            Baseline=@{Pages=5;Lines=40;Instructions=600;OpenFunctions=0;PageRvas=@(4096);Name='PRIVATE_FIXTURE_FOOTPRINT'}
+            Candidate=@{Pages=$pages;Lines=41;Instructions=612;OpenFunctions=1;PageRvas=@(8192)}}
+    })
     Sections = @(@{Name='.text';DifferentBytes=12;BaselineOnlyBytes=0;CandidateOnlyBytes=8},
         @{Name='.PRIVATE_FIXTURE_SECTION';DifferentBytes=123;BaselineOnlyBytes=0;CandidateOnlyBytes=0})
 }
@@ -141,7 +147,9 @@ function Test-LayoutRun([string]$Mode, [string]$Expected, [switch]$Fails) {
     if ($Mode -ceq 'success') {
         foreach ($field in $baseSha, '| `switch_buffer` | -16 |', '| `callback_state` | — |', '| `fill_slots` | +24 |',
             '| 変換カーネル | 7 | 4 | 2 | -8 ～ +32 |', '| SIMD定数 | 0 | 0 | 1 | — ～ — |',
-            '（一部のみ）　基準 3 件 ／ 候補 4 件', '| `.text` | 12 | 0 | 8 |') {
+            '（一部のみ）　基準 3 件 ／ 候補 4 件', '| `.text` | 12 | 0 | 8 |',
+            '| コールバック | 5 → 5 | 40 → 41 | 600 → 612 | 0 → 1 |', '| 制御の定期起床 | 5 → 7 | 40 → 41 | 600 → 612 | 0 → 1 |',
+            '| 補充 | 5 → 5 |', '| 表示の更新 | 5 → 5 |') {
             Assert-True ($text.Contains($field)) 'Published table differs from the report.'
         }
     }

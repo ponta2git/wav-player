@@ -36,6 +36,45 @@ $table = Read-TestBody 0x103B (0xFF,0xE0,0x48,0x8D,0x0D,0xBC,0,0,0) @(
 Assert-True ($table.IndirectJumps -eq 1 -and $table.Instructions.Count -eq 1 -and $table.Crossings.Count -eq 0) 'Bytes after an unresolved indirect jump were counted as code.'
 Complete-TestGroup 'cache-line boundaries, wrapped last instruction and inline data'
 
+# A function whose return ends just before a page boundary and whose throwing
+# tail lies beyond it: test eax,eax / je tail / ret / tail: call / int 3.
+$tail = Read-TestBody 0x1FF8 (0x85,0xC0,0x74,0x01,0xC3,0xE8,0xFE,0x0F,0,0,0xCC) @(
+    '  00001FF8: 85 C0              test        eax,eax'
+    '  00001FFA: 74 01              je          00001FFD'
+    '  00001FFC: C3                 ret'
+    '  00001FFD: E8 FE 0F 00 00     call        thrower'
+    '  00002002: CC                 int         3')
+Assert-True ($tail.Instructions.Count -eq 5 -and $tail.Returning.Count -eq 3 -and
+    -not @($tail.Returning | Where-Object { $_.Rva -ge 0x1FFD }).Count) 'Instructions that only reach a trap were counted as returning.'
+$bodies = @{ [long]0x1FF8 = $tail }
+$footprint = Get-LayoutFootprint $bodies 'Callback'
+Assert-True ($footprint.Functions -eq 1 -and $footprint.OpenFunctions -eq 0 -and $footprint.Instructions -eq 3 -and
+    $footprint.Bytes -eq 5 -and $footprint.TrapOnlyInstructions -eq 2) 'The footprint does not separate the trap-only tail.'
+Assert-True ($footprint.Pages -eq 1 -and $footprint.Lines -eq 1 -and $footprint.PageRvas.Count -eq 1 -and
+    $footprint.PageRvas[0] -eq 0x1000) 'A trap-only tail beyond a page boundary added a page to the footprint.'
+$other = Get-LayoutFootprint $bodies 'Refill'
+Assert-True ($other.Functions -eq 0 -and $other.Pages -eq 0 -and $other.Lines -eq 0) 'A footprint counted another path''s function.'
+
+# The same bytes two bytes later: now the return itself crosses the boundary.
+$crossing = Read-TestBody 0x1FFC (0x85,0xC0,0x74,0x01,0xC3,0xE8,0xFA,0x0F,0,0,0xCC) @(
+    '  00001FFC: 85 C0              test        eax,eax'
+    '  00001FFE: 74 01              je          00002001'
+    '  00002000: C3                 ret'
+    '  00002001: E8 FA 0F 00 00     call        thrower'
+    '  00002006: CC                 int         3')
+$footprint = Get-LayoutFootprint @{ [long]0x1FFC = $crossing } 'Callback'
+Assert-True ($footprint.Pages -eq 2 -and $footprint.Lines -eq 2 -and $footprint.Instructions -eq 3) 'A returning instruction on the next page was not counted.'
+
+# A tail transfer leaves the body like a return; an unresolved indirect jump
+# leaves it too, and marks the function open because the walk stops there.
+$transfer = Read-TestBody 0x1000 (0x85,0xC0,0xE9,0xF9,0x0F,0,0) @(
+    '  00001000: 85 C0              test        eax,eax'
+    '  00001002: E9 F9 0F 00 00     jmp         elsewhere')
+Assert-True ($transfer.Returning.Count -eq 2) 'A direct tail jump out of the function was treated as a trap.'
+$footprint = Get-LayoutFootprint @{ [long]0x103B = $table } 'Callback'
+Assert-True ($footprint.OpenFunctions -eq 1 -and $footprint.Instructions -eq 1) 'An unresolved indirect jump did not mark its function open.'
+Complete-TestGroup 'path footprints: returning instructions, trap-only tails, page boundaries and open functions'
+
 $before = Read-TestBody 0x1000 (0xE8,0xFB,0x0F,0,0,0xC3) @(
     '  00001000: E8 FB 0F 00 00     call        name_from_debug_symbols'
     '  00001005: C3                 ret')

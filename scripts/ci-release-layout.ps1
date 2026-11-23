@@ -125,6 +125,24 @@ function Get-LayoutSummaryTable($Summary) {
     ''
     '64バイト境界をまたぐ命令（{0}）　基準 {1} 件 ／ 候補 {2} 件' -f $instructionStatus,
         (Format-LayoutNumber $Summary.Instructions.BaselineCrossings), (Format-LayoutNumber $Summary.Instructions.CandidateCrossings)
+    $paths = [ordered]@{ Callback = 'コールバック'; Refill = '補充'; Control = '制御の定期起床'; Display = '表示の更新' }
+    $footprints = @($Summary.Footprints)
+    if ($footprints.Count) {
+        ''
+        '| 再生中に動く経路 | 4 KiBページ（基準 → 候補） | 64バイト行（基準 → 候補） | 命令（基準 → 候補） | 途中までの関数（基準 → 候補） |'
+        '|---|---:|---:|---:|---:|'
+        foreach ($name in $paths.Keys) {
+            $rows = @($footprints | Where-Object { $_.Path -ceq $name })
+            if ($rows.Count -ne 1) { throw 'Missing or duplicate path footprint.' }
+            $before = $rows[0].Baseline
+            $after = $rows[0].Candidate
+            '| {0} | {1} → {2} | {3} → {4} | {5} → {6} | {7} → {8} |' -f $paths[$name],
+                (Format-LayoutNumber $before.Pages), (Format-LayoutNumber $after.Pages),
+                (Format-LayoutNumber $before.Lines), (Format-LayoutNumber $after.Lines),
+                (Format-LayoutNumber $before.Instructions), (Format-LayoutNumber $after.Instructions),
+                (Format-LayoutNumber $before.OpenFunctions), (Format-LayoutNumber $after.OpenFunctions)
+        }
+    }
     ''
     '| セクション | 共通範囲で異なるバイト | 基準だけのバイト | 候補だけのバイト |'
     '|---|---:|---:|---:|'
