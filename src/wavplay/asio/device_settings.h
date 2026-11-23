@@ -6,8 +6,8 @@
 
 namespace wavplay::asio {
 
-// Silence returned after each start, before the first PCM block. A tested driver
-// lost the beginning of a segment and clicked when playback began with audio.
+// Silence returned after each start, before the first PCM block: a driver may
+// drop or disturb the first buffers after start, which must not hold audio.
 inline constexpr std::chrono::milliseconds default_start_silence{100};
 inline constexpr std::chrono::milliseconds max_start_silence{1000};
 

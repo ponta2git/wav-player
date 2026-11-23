@@ -20,6 +20,9 @@ namespace {
 
 // Only the final read of a scan can end inside a vector.
 static_assert(WavReader::validation_bytes % sizeof(__m128i) == 0);
+// A staging buffer holds at least one frame of the widest input (stereo, four
+// bytes a sample), so every staged read makes progress.
+static_assert(WavReader::staging_bytes >= 2 * 4);
 
 void validate_unused_bits(ReadOnlyFile& file, const WavInfo& info)
 {

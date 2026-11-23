@@ -324,8 +324,8 @@ private:
     }
 
     // The frame count above trusts the reported latency. A driver can queue
-    // more: a tested driver requested about three buffers at once after start() had
-    // returned, and stop() discards what is still queued. Keep returning
+    // more, for example by requesting several buffers at once after start()
+    // has returned, and stop() discards what is still queued. Keep returning
     // silence for two more block periods of wall time before stopping.
     void play_out_driver_queue() noexcept
     {

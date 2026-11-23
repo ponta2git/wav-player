@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <condition_variable>
 #include <mutex>
 #include <optional>
@@ -228,6 +229,10 @@ struct PlaybackController::Impl {
 
     void fail_locked(std::exception_ptr error, PlaybackResult result)
     {
+        // The queue and the worker gate on `faulted`; the GUI gates on
+        // PlaybackSnapshot::faulted(), derived from the error and the result.
+        // Every failure must therefore publish one of the two.
+        assert(error || status.error || (playback::is_fault(result) && !playback::is_track_refusal(result)));
         faulted = true;
         if (error) {
             status.error = std::move(error);
@@ -549,7 +554,9 @@ struct PlaybackController::Impl {
         }
     }
 
-    // Scalar arguments let the caller avoid materializing the entire command.
+    // Idle selection of `index`. `sequence` is the receipt it answers. A plain
+    // Select settles here, with the item's metadata; Select and Play returns
+    // true for the caller to start, and settles when that start succeeds.
     bool select_idle(std::size_t index, std::uint64_t sequence, PlaybackCommand command)
     {
         try {
