@@ -20,7 +20,12 @@
 namespace wavplay::settings {
 namespace {
 
+// The [Window] keys, in the order of their names below. The position keys
+// come first and accept negative values; with the two size keys they form the
+// geometry, which a file gives completely or not at all.
+enum : int { key_x, key_y, key_width, key_height, key_maximized, window_key_count, geometry_key_count = key_maximized };
 constexpr std::array<std::string_view, 5> window_keys{"X", "Y", "Width", "Height", "Maximized"};
+static_assert(window_keys.size() == window_key_count);
 
 // A blank result is still a view into `text` (at its end), never a null view,
 // so the writer can compute every value's offset in the source.
@@ -298,20 +303,21 @@ ApplicationConfig parse_application_config(std::string_view utf8, std::optional<
         } else if (equal_ascii(entry.section, "Window")) {
             if (const auto index = window_key(entry.key)) {
                 require_unique_assignment(entry, window_seen[*index]);
-                const auto minimum = *index < 2 ? (std::numeric_limits<int>::min)() : (*index == 4 ? 0 : 1);
-                const auto maximum = *index == 4 ? 1 : (std::numeric_limits<int>::max)();
+                const auto minimum = *index < key_width ? (std::numeric_limits<int>::min)() : (*index == key_maximized ? 0 : 1);
+                const auto maximum = *index == key_maximized ? 1 : (std::numeric_limits<int>::max)();
                 window_values[*index] = static_cast<int>(decimal_value(entry.value, minimum, maximum, entry.key));
             }
         }
     });
     if (selected_override) { result.selected_device = selected_override; }
     if (result.selected_device && IsEqualGUID(*result.selected_device, GUID{})) { result.selected_device.reset(); }
-    const auto geometry_count = std::count(window_seen.begin(), window_seen.begin() + 4, true);
-    if ((geometry_count != 0 || window_seen[4]) && geometry_count != 4) {
+    const auto geometry_count = std::count(window_seen.begin(), window_seen.begin() + geometry_key_count, true);
+    if ((geometry_count != 0 || window_seen[key_maximized]) && geometry_count != geometry_key_count) {
         throw std::invalid_argument("settings.ini Window requires X, Y, Width and Height together");
     }
-    if (geometry_count == 4) {
-        result.window = WindowPlacement{window_values[0], window_values[1], window_values[2], window_values[3], window_values[4] != 0};
+    if (geometry_count == geometry_key_count) {
+        result.window = WindowPlacement{window_values[key_x], window_values[key_y], window_values[key_width],
+            window_values[key_height], window_values[key_maximized] != 0};
         validate_window(*result.window);
     }
     if (!result.selected_device) { return result; }
