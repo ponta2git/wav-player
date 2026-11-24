@@ -39,10 +39,29 @@ static_assert([] {
 static_assert(count == 15);
 } // namespace control_id
 
+// How the time field draws itself. Both functions draw like a left-aligned,
+// single-line standard label: `text` starts at the top-left corner of
+// `bounds`, in `font` and the system's label colors, and never wraps.
+//
+// Fills `clip` and draws the part of the text inside it; other pixels stay.
+// False if GDI refuses.
+[[nodiscard]] bool draw_label(HDC dc, HFONT font, const RECT& bounds, const RECT& clip, std::wstring_view text) noexcept;
+// The label shows `previous` and its text is now `next`. Redraws the
+// characters that differ, with one neighbor on each side for the overhang of a
+// glyph, and everything after them unless the text kept its extent. False
+// without drawing if a text has more than label_capacity characters or GDI
+// refuses; the caller then repaints the label.
+inline constexpr std::size_t label_capacity = 127;
+[[nodiscard]] bool redraw_changed_label(HDC dc, HFONT font, const RECT& bounds, std::wstring_view previous,
+    std::wstring_view next) noexcept;
+
 // The parent HWND owns the controls; this object owns their shared GDI font.
 // No playback state or command policy belongs in this view.
 class PlayerControls {
 public:
+    PlayerControls() = default;
+    PlayerControls(const PlayerControls&) = delete; // The time field's subclass keeps this address.
+    PlayerControls& operator=(const PlayerControls&) = delete;
     void create(HWND window, const PlayerOptions& options);
     void update_metrics(UINT dpi);
     void layout();
@@ -57,6 +76,8 @@ public:
     // previous cached text, whose storage the caller can reuse. An unchanged
     // value or a failed SetWindowTextW leaves it intact. No allocation follows
     // the window update: the cache commits by a noexcept string swap.
+    // The time field then redraws only the characters that changed; every
+    // other control repaints itself.
     void text_reuse(int id, std::wstring& prepared);
     // For failure paths: sets the control without throwing and marks the cached
     // copy unknown, so the next text() call sets the control again.
@@ -87,6 +108,12 @@ private:
     [[nodiscard]] int x(int units) const noexcept { return MulDiv(units, base_x_, 4); }
     [[nodiscard]] int y(int units) const noexcept { return MulDiv(units, base_y_, 8); }
     void add(const wchar_t* type, std::wstring_view value, int id, DWORD style, DWORD extended = 0);
+    // The time field is a standard label that this object paints: all of it
+    // for WM_PAINT, and only what changed when text_reuse() sets a new text.
+    void redraw_time(HWND item, std::wstring_view previous, std::wstring_view next) const noexcept;
+    void paint_time(HWND item, HDC dc, const RECT& clip) const noexcept;
+    static LRESULT CALLBACK time_field_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam,
+        UINT_PTR subclass, DWORD_PTR context) noexcept;
     void update_playlist_extent();
     [[nodiscard]] HWND focus_fallback() const noexcept;
 };

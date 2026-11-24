@@ -28,6 +28,11 @@ foreach ($case in @(
     @('?refresh@PlayerWindow@?A0x379dfc1b@ui@wavplay@@AEAAXXZ', 'Display'),
     @('?window_proc@PlayerWindow@?A0x379dfc1b@ui@wavplay@@CA_JPEAUHWND__@@I_K_J@Z', 'Display'),
     @('?playback_time_text@ui@wavplay@@YAXAEAV?$basic_string@_W@std@@_K1I@Z', 'Display'),
+    @('?time_field_proc@PlayerControls@ui@wavplay@@CA_JPEAUHWND__@@I_K_J11@Z', 'Display'),
+    @('?draw_label_text@?A0x379dfc1b@ui@wavplay@@YA_NPEAUHDC__@@AEBUtagRECT@@1V?$basic_string_view@_WU?$char_traits@_W@std@@@std@@@Z', 'Display'),
+    @('?redraw_changed_label@ui@wavplay@@YA_NPEAUHDC__@@PEAUHFONT__@@AEBUtagRECT@@V?$basic_string_view@_WU?$char_traits@_W@std@@@std@@3@Z', 'Display'),
+    @('?draw_label@ui@wavplay@@YA_NPEAUHDC__@@PEAUHFONT__@@AEBUtagRECT@@2V?$basic_string_view@_WU?$char_traits@_W@std@@@std@@@Z', 'Other'),
+    @('?update_metrics@PlayerControls@ui@wavplay@@QEAAXI@Z', 'Other'),
     @('?refresh_failed@PlayerWindow@?A0x379dfc1b@ui@wavplay@@AEAAXXZ', 'Other'),
     @('?render_controls@PlayerWindow@?A0x379dfc1b@ui@wavplay@@AEAAXAEBUPlaybackSnapshot@control@3@_N@Z', 'Other'))) {
     $symbol = [pscustomobject]@{ Name = $case[0]; IsFunction = $true }

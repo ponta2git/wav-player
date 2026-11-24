@@ -30,11 +30,13 @@ function Get-LayoutSymbolGroup($Symbol) {
         $name -cmatch '^\?(?:poll|publish_progress_and_check_commands|update_position_locked)@Impl@PlaybackController@control@wavplay@@' -or
         $name -cmatch '^\?progressed@StateNotification@(?:\?A0x[0-9a-fA-F]+@)?ui@wavplay@@') { return 'Control' }
     # What the GUI thread enters for one progress publication: the message loop,
-    # the window procedure, the refresh and the time text it renders.
+    # the window procedure, the refresh, the time text it renders and the time
+    # field that stores the text and draws its changed characters.
     if ($name -cmatch '^\?(?:run|translate|window_proc|refresh)@PlayerWindow@\?A0x[0-9a-fA-F]+@ui@wavplay@@' -or
         $name -cmatch '^\?refresh_snapshot@(?:Impl@)?PlaybackController@control@wavplay@@' -or
-        $name -cmatch '^\?playback_time_text@ui@wavplay@@' -or
-        $name -cmatch '^\?text_reuse@PlayerControls@ui@wavplay@@') { return 'Display' }
+        $name -cmatch '^\?(?:playback_time_text|redraw_changed_label)@ui@wavplay@@' -or
+        $name -cmatch '^\?draw_label_text@\?A0x[0-9a-fA-F]+@ui@wavplay@@' -or
+        $name -cmatch '^\?(?:text_reuse|redraw_time|time_field_proc)@PlayerControls@ui@wavplay@@') { return 'Display' }
     'Other'
 }
 

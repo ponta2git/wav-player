@@ -17,6 +17,7 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <future>
 #include <filesystem>
@@ -33,6 +34,7 @@
 #include <system_error>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #pragma comment(lib, "imm32.lib")
 
@@ -1060,6 +1062,377 @@ void test_control_text_storage_reuse()
             shown() == std::format(L"Time: 0:{:02} / 1:00", second));
     }
     expect("each changed second sends exactly one update", probe.sets, 64);
+}
+
+// A 32-bit bitmap in a memory device context, to compare drawn pixels.
+class Canvas {
+public:
+    static constexpr COLORREF untouched = RGB(255, 0, 255); // Neither label color.
+    static constexpr std::uint32_t untouched_pixel = 0xff00ff; // The same color as pixels() returns it.
+
+    Canvas(int width, int height) : width_(width), height_(height), dc_(CreateCompatibleDC(nullptr))
+    {
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(info.bmiHeader);
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height; // Top-down rows.
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        bitmap_ = dc_ ? CreateDIBSection(dc_, &info, DIB_RGB_COLORS, &bits_, nullptr, 0) : nullptr;
+        if (!bitmap_) {
+            if (dc_) { DeleteDC(dc_); }
+            throw std::runtime_error("Cannot create the drawing fixture");
+        }
+        previous_ = SelectObject(dc_, bitmap_);
+        fill();
+    }
+    ~Canvas()
+    {
+        SelectObject(dc_, previous_);
+        DeleteObject(bitmap_);
+        DeleteDC(dc_);
+    }
+    Canvas(const Canvas&) = delete;
+    Canvas& operator=(const Canvas&) = delete;
+    [[nodiscard]] HDC dc() const noexcept { return dc_; }
+    [[nodiscard]] int width() const noexcept { return width_; }
+    [[nodiscard]] int height() const noexcept { return height_; }
+    void fill()
+    {
+        const RECT all{0, 0, width_, height_};
+        const auto brush = CreateSolidBrush(untouched);
+        FillRect(dc_, &all, brush);
+        DeleteObject(brush);
+    }
+    // 0x00RRGGBB per pixel, row by row from the top.
+    [[nodiscard]] std::vector<std::uint32_t> pixels() const
+    {
+        GdiFlush();
+        const auto* const first = static_cast<const std::uint32_t*>(bits_);
+        std::vector<std::uint32_t> result(first, first + static_cast<std::size_t>(width_) * height_);
+        for (auto& pixel : result) { pixel &= 0xffffff; }
+        return result;
+    }
+    // The columns and rows that hold a pixel drawn since fill(): {left, top, right, bottom}, empty if none.
+    [[nodiscard]] RECT touched() const
+    {
+        const auto all = pixels();
+        RECT area{width_, height_, 0, 0};
+        for (int y = 0; y < height_; ++y) {
+            for (int x = 0; x < width_; ++x) {
+                if (all[static_cast<std::size_t>(y) * width_ + x] != untouched_pixel) {
+                    area.left = std::min<LONG>(area.left, x);
+                    area.top = std::min<LONG>(area.top, y);
+                    area.right = std::max<LONG>(area.right, x + 1);
+                    area.bottom = std::max<LONG>(area.bottom, y + 1);
+                }
+            }
+        }
+        return area.left < area.right ? area : RECT{};
+    }
+
+private:
+    int width_, height_;
+    HDC dc_;
+    HBITMAP bitmap_{};
+    void* bits_{};
+    HGDIOBJ previous_{};
+};
+
+struct TestFont {
+    HFONT handle;
+    explicit TestFont(const LOGFONTW& description) : handle(CreateFontIndirectW(&description))
+    {
+        if (!handle) { throw std::runtime_error("Cannot create the label test font"); }
+    }
+    TestFont(const wchar_t* face, LONG height, bool italic = false, LONG weight = FW_NORMAL) : TestFont([&] {
+        LOGFONTW description{};
+        description.lfHeight = height;
+        description.lfItalic = italic;
+        description.lfWeight = weight;
+        description.lfCharSet = DEFAULT_CHARSET;
+        wcsncpy_s(description.lfFaceName, face, _TRUNCATE);
+        return description;
+    }()) {}
+    ~TestFont() { DeleteObject(handle); }
+    TestFont(const TestFont&) = delete;
+    TestFont& operator=(const TestFont&) = delete;
+};
+
+LOGFONTW message_font()
+{
+    NONCLIENTMETRICSW metrics{sizeof(metrics)};
+    if (!SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0, 96)) {
+        throw std::runtime_error("Cannot read the system message font");
+    }
+    return metrics.lfMessageFont;
+}
+
+// Every text the time field shows in order, with the changes of length around
+// them, an unrelated text, an unchanged text and the empty text.
+constexpr std::array<std::wstring_view, 22> label_texts{L"Time: --:-- / --:--", L"Time: 0:00 / 0:04",
+    L"Time: 0:01 / 0:04", L"Time: 0:02 / 0:04", L"Time: 0:09 / 0:04", L"Time: 0:10 / 0:04", L"Time: 0:11 / 0:04",
+    L"Time: 0:59 / 59:00", L"Time: 1:00 / 59:00", L"Time: 1:11 / 59:00", L"Time: 9:59 / 59:00", L"Time: 10:00 / 59:00",
+    L"Time: 59:59 / 1:00:01", L"Time: 1:00:00 / 1:00:01", L"Time: 1:00:00 / 1:00:01", L"Time: 0:00 / 0:03", L"",
+    L"Time: 7:11 / 1:14", L"Time: 1:17 / 7:14", L"Closing", L"Time: 0:00 / 0:04", L"Time: 0:00 / 0:05"};
+
+// redraw_changed_label() must leave the pixels a complete draw of the new text
+// leaves, and must draw only the columns its contract names. The expected
+// columns are measured here with the plain extent of a prefix.
+void test_changed_label_redraw()
+{
+    const RECT bounds{7, 5, 407, 45}; // Inside the bitmap, so drawing outside the label shows.
+    const TestFont system(message_font());
+    const TestFont proportional(L"Georgia", -16);
+    const TestFont fixed(L"Courier New", -13);
+    const TestFont slanted(L"Segoe UI", -20, true, FW_BOLD);
+    for (const auto* font : {&system, &proportional, &fixed, &slanted}) {
+        Canvas complete(414, 50), redrawn(414, 50), changed(414, 50);
+        const auto extent = [&](std::wstring_view text) {
+            const auto original = SelectObject(changed.dc(), font->handle);
+            SIZE size{};
+            const bool measured = text.empty() ||
+                GetTextExtentPoint32W(changed.dc(), text.data(), static_cast<int>(text.size()), &size);
+            SelectObject(changed.dc(), original);
+            expect_true("the label test measures its text", measured);
+            return size.cx;
+        };
+        for (std::size_t index = 1; index < label_texts.size(); ++index) {
+            const auto previous = label_texts[index - 1], next = label_texts[index];
+            const auto step = "label step " + std::to_string(index);
+            complete.fill();
+            expect_true(step + " draws the new text completely",
+                ui::draw_label(complete.dc(), font->handle, bounds, bounds, next));
+            redrawn.fill();
+            expect_true(step + " draws the previous text completely",
+                ui::draw_label(redrawn.dc(), font->handle, bounds, bounds, previous));
+            expect_true(step + " redraws the change",
+                ui::redraw_changed_label(redrawn.dc(), font->handle, bounds, previous, next));
+            expect_true(step + " leaves the pixels of a complete draw", redrawn.pixels() == complete.pixels());
+
+            std::size_t first = 0;
+            while (first < previous.size() && first < next.size() && previous[first] == next[first]) { ++first; }
+            std::size_t tail = next.size();
+            for (auto old = previous.size(); old > first && tail > first && previous[old - 1] == next[tail - 1]; --old) {
+                --tail;
+            }
+            const LONG left = bounds.left + extent(next.substr(0, first ? first - 1 : 0));
+            const LONG right = extent(previous) == extent(next) && tail < next.size() ?
+                std::min(bounds.right, bounds.left + extent(next.substr(0, tail + 1))) : bounds.right;
+            changed.fill();
+            expect_true(step + " redraws on a surface of its own",
+                ui::redraw_changed_label(changed.dc(), font->handle, bounds, previous, next));
+            const auto touched = changed.touched();
+            expect(step + " starts one character before the change", touched.left, left);
+            expect(step + " ends one character after the change, or at the end of the label", touched.right, right);
+            expect(step + " stays below the top of the label", touched.top, bounds.top);
+            expect(step + " stays above the bottom of the label", touched.bottom, bounds.bottom);
+        }
+    }
+    // The update of a new second in the system font: three characters of
+    // nineteen, wherever the digits have one width.
+    Canvas second(414, 50);
+    const auto original = SelectObject(second.dc(), system.handle);
+    SIZE one{}, two{}, whole{}, part{};
+    const bool measured = GetTextExtentPoint32W(second.dc(), L"1", 1, &one) && GetTextExtentPoint32W(second.dc(), L"2", 1, &two) &&
+        GetTextExtentPoint32W(second.dc(), L"Time: 0:02 / 0:04", 17, &whole) && GetTextExtentPoint32W(second.dc(), L"02 ", 3, &part);
+    SelectObject(second.dc(), original);
+    expect_true("the system font measures a time text", measured);
+    if (one.cx == two.cx) {
+        expect_true("a new second redraws its characters",
+            ui::redraw_changed_label(second.dc(), system.handle, bounds, L"Time: 0:01 / 0:04", L"Time: 0:02 / 0:04"));
+        const auto touched = second.touched();
+        expect("a new second redraws the changed digit and its two neighbors", touched.right - touched.left, part.cx);
+        expect_true("a new second redraws less than the text", touched.right - touched.left < whole.cx);
+    }
+    // Longer texts than the redraw measures are left to a complete repaint.
+    const std::wstring longest(ui::label_capacity, L'8'), longer(ui::label_capacity + 1, L'8');
+    second.fill();
+    expect_true("the longest redrawn text is accepted",
+        ui::redraw_changed_label(second.dc(), system.handle, bounds, L"8", longest));
+    second.fill();
+    expect_true("a longer new text is refused",
+        !ui::redraw_changed_label(second.dc(), system.handle, bounds, L"8", longer));
+    expect_true("a longer previous text is refused",
+        !ui::redraw_changed_label(second.dc(), system.handle, bounds, longer, L"8"));
+    expect_true("a refused redraw draws nothing", second.touched().right == 0);
+    expect_true("a complete draw has no limit", ui::draw_label(second.dc(), system.handle, bounds, bounds, longer));
+}
+
+// The controls of PlayerControls in a top-level window of their own, laid out
+// at a size that shows every control.
+struct ControlsWindow {
+    ui::PlayerControls controls;
+    HWND parent{};
+
+    explicit ControlsWindow(bool visible)
+    {
+        parent = CreateWindowExW(visible ? WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW : 0, L"STATIC", L"",
+            WS_POPUP | WS_CLIPCHILDREN, 40, 40, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (!parent) { throw std::runtime_error("Cannot create the controls fixture window"); }
+        try {
+            controls.create(parent, {});
+            // The initial size of the product window at this monitor's scaling.
+            const auto size = controls.window_size(true);
+            if (!SetWindowPos(parent, nullptr, 0, 0, size.cx, size.cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)) {
+                throw std::runtime_error("Cannot size the controls fixture window");
+            }
+            controls.layout();
+            if (visible) {
+                ShowWindow(parent, SW_SHOWNOACTIVATE);
+                update(parent);
+            }
+        } catch (...) {
+            DestroyWindow(parent);
+            throw;
+        }
+    }
+    ~ControlsWindow() { DestroyWindow(parent); } // Before controls releases the font of its children.
+    ControlsWindow(const ControlsWindow&) = delete;
+    ControlsWindow& operator=(const ControlsWindow&) = delete;
+    [[nodiscard]] HWND time() const noexcept { return controls.child(ui::control_id::time); }
+    // Paints every invalid part of the window and its children now.
+    static void update(HWND window) { RedrawWindow(window, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN); }
+    static void repaint(HWND window) { RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW); }
+    [[nodiscard]] static SIZE client(HWND window)
+    {
+        RECT area{};
+        if (!GetClientRect(window, &area) || area.right <= 0 || area.bottom <= 0) {
+            throw std::runtime_error("The label fixture has no client area");
+        }
+        return {area.right, area.bottom};
+    }
+    // What the control paints into a device context it is given.
+    [[nodiscard]] static std::vector<std::uint32_t> printed(HWND window)
+    {
+        const auto size = client(window);
+        Canvas canvas(size.cx, size.cy);
+        SendMessageW(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(canvas.dc()), PRF_CLIENT | PRF_ERASEBKGND);
+        return canvas.pixels();
+    }
+    // What the window shows.
+    [[nodiscard]] static std::vector<std::uint32_t> shown(HWND window)
+    {
+        const auto size = client(window);
+        Canvas canvas(size.cx, size.cy);
+        const auto dc = GetDC(window);
+        if (!dc) { throw std::runtime_error("Cannot read the label fixture window"); }
+        GdiFlush();
+        const bool copied = BitBlt(canvas.dc(), 0, 0, size.cx, size.cy, dc, 0, 0, SRCCOPY) != FALSE;
+        ReleaseDC(window, dc);
+        if (!copied) { throw std::runtime_error("Cannot copy the label fixture window"); }
+        return canvas.pixels();
+    }
+};
+
+// The time field paints itself. It must look like the standard label it
+// replaces: compare it with one of the same size, font and text.
+void test_time_field_matches_standard_label()
+{
+    ControlsWindow window(false);
+    const auto time = window.time();
+    const auto size = ControlsWindow::client(time);
+    const auto reference = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+        0, 0, size.cx, size.cy, window.parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!reference) { throw std::runtime_error("Cannot create the reference label"); }
+    SendMessageW(reference, WM_SETFONT, static_cast<WPARAM>(SendMessageW(time, WM_GETFONT, 0, 0)), FALSE);
+    expect_true("the time field starts as a label would", SetWindowTextW(reference, L"Time: --:-- / --:--") &&
+        ControlsWindow::printed(time) == ControlsWindow::printed(reference));
+    const auto blank = [&] {
+        expect_true("the reference label clears", SetWindowTextW(reference, L"") != FALSE);
+        return ControlsWindow::printed(reference);
+    }();
+    std::wstring text;
+    for (const auto expected : label_texts) {
+        if (expected.empty()) { continue; }
+        text = expected;
+        window.controls.text_reuse(ui::control_id::time, text);
+        expect_true("the reference label takes the text", SetWindowTextW(reference, std::wstring(expected).c_str()) != FALSE);
+        const auto painted = ControlsWindow::printed(time);
+        expect_true("the time field paints its text as a standard label does", painted == ControlsWindow::printed(reference));
+        expect_true("the painted time field shows a text", painted != blank);
+    }
+    // A failure-path text bypasses the cache. The field paints what the window holds.
+    window.controls.show_text(ui::control_id::time, L"Closing");
+    expect_true("the reference label takes the failure text", SetWindowTextW(reference, L"Closing") != FALSE);
+    expect_true("the time field paints a failure-path text", ControlsWindow::printed(time) == ControlsWindow::printed(reference));
+}
+
+// On a visible window, a new time text draws its change at once and leaves no
+// update region: the row is not invalidated, and the standard label's own
+// repaint, which asks the parent for its colors, does not run. A text that
+// follows a failure-path text has no known pixels to change, so the field
+// repaints.
+void test_time_field_redraws_on_screen()
+{
+    // Counts the color requests of standard repaints. Declared first: the
+    // window removes this subclass while it is destroyed.
+    struct Repaints {
+        HWND time{}, reference{};
+        unsigned by_time{}, by_reference{};
+        static LRESULT CALLBACK procedure(HWND parent, UINT message, WPARAM wparam, LPARAM lparam,
+            UINT_PTR id, DWORD_PTR context) noexcept
+        {
+            auto& self = *reinterpret_cast<Repaints*>(context);
+            if (message == WM_NCDESTROY) { RemoveWindowSubclass(parent, procedure, id); }
+            if (message == WM_CTLCOLORSTATIC) {
+                const auto source = reinterpret_cast<HWND>(lparam);
+                if (source == self.time) { ++self.by_time; }
+                if (source == self.reference) { ++self.by_reference; }
+            }
+            return DefSubclassProc(parent, message, wparam, lparam);
+        }
+    } repaints;
+    ControlsWindow window(true);
+    const auto time = window.time();
+    const auto size = ControlsWindow::client(time);
+    repaints.time = time;
+    repaints.reference = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+        0, 0, size.cx, size.cy, window.parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!repaints.reference || !SetWindowSubclass(window.parent, Repaints::procedure, 3, reinterpret_cast<DWORD_PTR>(&repaints))) {
+        throw std::runtime_error("Cannot observe the label repaints");
+    }
+    ControlsWindow::update(window.parent);
+    repaints.by_time = repaints.by_reference = 0;
+    expect_true("the reference label takes a text", SetWindowTextW(repaints.reference, L"Time: 0:01 / 0:04") != FALSE);
+    expect_true("a standard label repaints itself for a new text", repaints.by_reference > 0);
+    const auto pending = [&] { return GetUpdateRect(time, nullptr, FALSE) != FALSE; };
+    expect_true("the shown time field is painted", !pending());
+    std::wstring text;
+    for (const auto expected : label_texts) {
+        if (expected == L"Time: --:-- / --:--" || expected.empty()) { continue; } // The initial text; never shown later.
+        text = expected;
+        const bool same = [&] {
+            std::array<wchar_t, 64> current{};
+            return std::wstring_view(current.data(), static_cast<std::size_t>(
+                GetWindowTextW(time, current.data(), static_cast<int>(current.size())))) == expected;
+        }();
+        const auto before = ControlsWindow::shown(time);
+        window.controls.text_reuse(ui::control_id::time, text);
+        expect_true("a new time text invalidates nothing", !pending());
+        const auto drawn = ControlsWindow::shown(time);
+        expect_true("a new time text changes the shown pixels", same || drawn != before);
+        ControlsWindow::repaint(time);
+        expect_true("the redrawn change equals a complete repaint", drawn == ControlsWindow::shown(time));
+    }
+    expect("the time field never runs the standard repaint for a new text", repaints.by_time, 0);
+    window.controls.show_text(ui::control_id::time, L"Closing");
+    expect_true("a failure-path text invalidates the field", pending());
+    ControlsWindow::update(time);
+    const auto failure = ControlsWindow::shown(time);
+    ControlsWindow::repaint(time);
+    expect_true("the painted failure-path text equals a complete repaint", failure == ControlsWindow::shown(time));
+    text = L"Time: 0:07 / 0:09";
+    window.controls.text_reuse(ui::control_id::time, text);
+    expect_true("the text after a failure-path text invalidates the field", pending());
+    ControlsWindow::update(time);
+    const auto drawn = ControlsWindow::shown(time);
+    ControlsWindow::repaint(time);
+    expect_true("the field repainted after a failure-path text equals a complete repaint",
+        drawn == ControlsWindow::shown(time));
+    text = L"Time: 0:08 / 0:09";
+    window.controls.text_reuse(ui::control_id::time, text);
+    expect_true("later texts draw their change again", !pending());
 }
 
 void test_single_track_timing()
@@ -3204,6 +3577,9 @@ int wavplay_test::run_player_window_tests()
     suite.run("GUI integer text equals the former std::format text and omits unverified rates", test_integer_text);
     suite.run("GUI text formatters reuse storage across steady updates and state boundaries", test_reused_text_storage);
     suite.run_timed("GUI text updates reuse storage and resynchronize the display cache", test_control_text_storage_reuse);
+    suite.run("GUI label redraw equals a complete draw and touches only the changed characters", test_changed_label_redraw);
+    suite.run_timed("GUI time field paints as a standard label does", test_time_field_matches_standard_label);
+    suite.run_timed("GUI time field draws a new text at once without invalidating its row", test_time_field_redraws_on_screen);
     suite.run_timed("GUI timing follows live PCM, start silence, Pause, Stop and completion", test_single_track_timing);
     suite.run_timed("GUI timing follows the playing track and adopts stopped selection and refused tracks", test_playlist_timing_selection_and_refusal);
     suite.run_timed("GUI displays the immutable filtered playlist and plays all rows gaplessly", test_playlist_display_and_continuous_playback);
