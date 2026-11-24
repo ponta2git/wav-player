@@ -9,6 +9,7 @@
 #include <limits>
 #include <stdexcept>
 #include <tuple>
+#include <utility>
 
 namespace wavplay::ui {
 namespace {
@@ -74,17 +75,156 @@ private:
     HGDIOBJ previous_{};
 };
 
+// Draws with the font already selected into `dc`, in the colors DefWindowProc
+// gives a standard label, and leaves the colors of `dc` as they were.
+bool draw_label_text(HDC dc, const RECT& bounds, const RECT& clip, std::wstring_view text) noexcept
+{
+    const auto background = SetBkColor(dc, GetSysColor(COLOR_BTNFACE));
+    const auto foreground = SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+    const bool drawn = ExtTextOutW(dc, bounds.left, bounds.top, ETO_OPAQUE | ETO_CLIPPED, &clip,
+        text.data(), static_cast<UINT>(text.size()), nullptr) != FALSE;
+    SetTextColor(dc, foreground);
+    SetBkColor(dc, background);
+    return drawn;
+}
+
 } // namespace
+
+bool draw_label(HDC dc, HFONT font, const RECT& bounds, const RECT& clip, std::wstring_view text) noexcept
+{
+    const auto selected = SelectObject(dc, font);
+    if (!selected || selected == HGDI_ERROR) {
+        return false;
+    }
+    const bool drawn = draw_label_text(dc, bounds, clip, text);
+    SelectObject(dc, selected);
+    return drawn;
+}
+
+bool redraw_changed_label(HDC dc, HFONT font, const RECT& bounds, std::wstring_view previous,
+    std::wstring_view next) noexcept
+{
+    if (previous.size() > label_capacity || next.size() > label_capacity) {
+        return false;
+    }
+    const auto selected = SelectObject(dc, font);
+    if (!selected || selected == HGDI_ERROR) {
+        return false;
+    }
+    std::array<int, label_capacity> ends{}; // ends[i]: the extent of the first i + 1 characters of `next`.
+    SIZE before{}, after{};
+    bool drawn{};
+    if ((previous.empty() || GetTextExtentPoint32W(dc, previous.data(), static_cast<int>(previous.size()), &before)) &&
+        (next.empty() || GetTextExtentExPointW(dc, next.data(), static_cast<int>(next.size()), 0, nullptr,
+            ends.data(), &after))) {
+        // [first, tail) of `next` replaces the characters between the common
+        // head and the common tail of the two texts.
+        std::size_t first = 0;
+        while (first < previous.size() && first < next.size() && previous[first] == next[first]) {
+            ++first;
+        }
+        std::size_t tail = next.size();
+        for (auto old = previous.size(); old > first && tail > first && previous[old - 1] == next[tail - 1]; --old) {
+            --tail;
+        }
+        RECT clip = bounds;
+        if (first > 1) {
+            clip.left = bounds.left + ends[first - 2];
+        }
+        // With the same extent, the common tail kept its position.
+        if (before.cx == after.cx && tail < next.size()) {
+            clip.right = std::min(bounds.right, bounds.left + ends[tail]);
+        }
+        drawn = clip.left >= clip.right || draw_label_text(dc, bounds, clip, next);
+    }
+    SelectObject(dc, selected);
+    return drawn;
+}
+
+void PlayerControls::redraw_time(HWND item, std::wstring_view previous, std::wstring_view next) const noexcept
+{
+    if (!IsWindowVisible(item)) {
+        return; // Showing the window paints the stored text.
+    }
+    bool drawn{};
+    if (const auto dc = GetDC(item)) {
+        RECT bounds{};
+        drawn = GetClientRect(item, &bounds) && redraw_changed_label(dc, font_.get(), bounds, previous, next);
+        ReleaseDC(item, dc);
+    }
+    if (!drawn) {
+        InvalidateRect(item, nullptr, FALSE);
+    }
+}
+
+void PlayerControls::paint_time(HWND item, HDC dc, const RECT& clip) const noexcept
+{
+    // The stored window text, not the cache: show_text() replaces only the
+    // former. Its first label_capacity characters; no text of this field is longer.
+    std::array<wchar_t, label_capacity + 1> text{};
+    const auto size = GetWindowTextW(item, text.data(), static_cast<int>(text.size()));
+    RECT bounds{};
+    if (GetClientRect(item, &bounds)) {
+        (void)draw_label(dc, font_.get(), bounds, clip, {text.data(), static_cast<std::size_t>(size)});
+    }
+}
+
+// The standard label repaints its whole row for every new text. This subclass
+// keeps the label's class, text and messages, but stores a new text without
+// that repaint and paints the field itself, so that text_reuse() can redraw
+// only the characters that changed. Only PlayerControls sets this text.
+LRESULT CALLBACK PlayerControls::time_field_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam,
+    UINT_PTR subclass, DWORD_PTR context) noexcept
+{
+    const auto& self = *reinterpret_cast<const PlayerControls*>(context);
+    switch (message) {
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(window, time_field_proc, subclass);
+        break;
+    case WM_SETTEXT: {
+        const auto stored = DefWindowProcW(window, message, wparam, lparam);
+        // While the field shows the cached text, text_reuse() redraws what
+        // changed. Otherwise the pixels are not known: repaint the field.
+        if (self.text_unknown_[control_id::slot(control_id::time)]) {
+            InvalidateRect(window, nullptr, FALSE);
+        }
+        return stored;
+    }
+    case WM_ERASEBKGND:
+        return 1; // Painting fills its own background.
+    case WM_PAINT: {
+        PAINTSTRUCT paint{};
+        if (const auto dc = BeginPaint(window, &paint)) {
+            self.paint_time(window, dc, paint.rcPaint);
+            EndPaint(window, &paint);
+        }
+        return 0;
+    }
+    case WM_PRINTCLIENT: {
+        RECT bounds{};
+        if (GetClientRect(window, &bounds)) {
+            self.paint_time(window, reinterpret_cast<HDC>(wparam), bounds);
+        }
+        return 0;
+    }
+    }
+    return DefSubclassProc(window, message, wparam, lparam);
+}
 
 HWND PlayerControls::child(int id) const noexcept { return GetDlgItem(window_, id); }
 
 void PlayerControls::add(const wchar_t* type, std::wstring_view value, int id, DWORD style, DWORD extended)
 {
     const std::wstring terminated(value);
-    if (!CreateWindowExW(extended, type, terminated.c_str(), WS_CHILD | WS_VISIBLE | style,
+    const auto item = CreateWindowExW(extended, type, terminated.c_str(), WS_CHILD | WS_VISIBLE | style,
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-        GetModuleHandleW(nullptr), nullptr)) {
+        GetModuleHandleW(nullptr), nullptr);
+    if (!item) {
         core::throw_last_error("CreateWindowExW(control)");
+    }
+    if (id == control_id::time) {
+        // Without the subclass the label repaints itself, as the others do.
+        (void)SetWindowSubclass(item, time_field_proc, 1, reinterpret_cast<DWORD_PTR>(this));
     }
     text_.at(control_id::slot(id)) = value;
 }
@@ -129,6 +269,9 @@ void PlayerControls::update_metrics(UINT dpi)
         core::throw_last_error("SystemParametersInfoForDpi");
     }
     if (font_ && dpi_ == dpi && same_font(font_description_, metrics.lfMessageFont)) {
+        // A setting can change how the same font is drawn. The time field
+        // would otherwise keep its unchanged characters in the old rendering.
+        InvalidateRect(child(control_id::time), nullptr, FALSE);
         return;
     }
     Font next(CreateFontIndirectW(&metrics.lfMessageFont));
@@ -296,8 +439,14 @@ void PlayerControls::text_reuse(int id, std::wstring& value)
     if (!text_unknown_[slot] && cached == value) {
         return;
     }
-    if (!SetWindowTextW(child(id), value.c_str())) {
+    const auto item = child(id);
+    if (!SetWindowTextW(item, value.c_str())) {
         core::throw_last_error("SetWindowTextW");
+    }
+    // The time field does not repaint itself for a text that follows the
+    // cached one (time_field_proc). Nothing after the window update throws.
+    if (id == control_id::time && !text_unknown_[slot]) {
+        redraw_time(item, cached, value);
     }
     cached.swap(value); // Commit only after success; return the previous storage.
     text_unknown_[slot] = false;
@@ -314,8 +463,9 @@ void PlayerControls::text(int id, const wchar_t* value)
 
 void PlayerControls::show_text(int id, const wchar_t* value) noexcept
 {
-    (void)SetWindowTextW(child(id), value);
+    // Marked first: the time field repaints for a text set while it is unknown.
     text_unknown_[control_id::slot(id)] = true;
+    (void)SetWindowTextW(child(id), value);
 }
 
 void PlayerControls::enable(int id, bool enabled) const noexcept
