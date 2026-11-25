@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <utility>
+#include <vector>
 
 namespace wavplay::playback {
 
