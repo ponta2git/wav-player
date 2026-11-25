@@ -3,9 +3,13 @@
 #include "wavplay/playback/playback_types.h"
 #include "wavplay/stream/gapless_run.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <memory>
+#include <optional>
 #include <string_view>
+#include <vector>
 
 namespace wavplay::asio {
 class DriverLease;
